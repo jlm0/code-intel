@@ -35,12 +35,35 @@ describe("index and query integration", () => {
         "packages/core/src/ledger.ts",
       );
 
+      const callees = await firstEngine.getCallees("summarize", { limit: 10 });
+      expect(callees.results.map((result) => result.file)).toContain(
+        "packages/core/src/tithe.ts",
+      );
+
       const secondEngine = createQueryEngine({ indexPath });
       const semantic = await secondEngine.semanticSearch("giving receipt summary", {
         limit: 5,
       });
       expect(semantic.results.length).toBeGreaterThan(0);
       expect(semantic.results.some((result) => result.file?.includes("tithe.ts"))).toBe(true);
+
+      const context = await secondEngine.getContext(semantic.results[0]!.id, { limit: 1 });
+      expect(context.results[0]?.excerpt).toMatch(/giving/i);
+
+      const expanded = await secondEngine.expandContext(semantic.results[0]!.id, {
+        depth: 1,
+        limit: 10,
+      });
+      expect(expanded.results.length).toBeGreaterThan(0);
+
+      const summarize = await secondEngine.findSymbol("summarize", { limit: 1 });
+      const calculate = await secondEngine.findSymbol("calculateGivingTotal", { limit: 1 });
+      const path = await secondEngine.tracePath(
+        summarize.results[0]!.id,
+        calculate.results[0]!.id,
+        { limit: 10 },
+      );
+      expect(path.results.map((result) => result.id)).toContain(calculate.results[0]!.id);
     } finally {
       await rm(indexPath, { recursive: true, force: true });
     }
