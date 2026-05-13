@@ -2,6 +2,7 @@ import type { CliActions } from "../cli/program.js";
 import { indexWorkspace } from "../indexer/indexer.js";
 import { createQueryEngine } from "../query/query-engine.js";
 import { searchText } from "../search/exact.js";
+import { startMcpServer } from "../mcp/server.js";
 import { createRuntimeContext } from "./context.js";
 import { runHealth } from "./health.js";
 import { getStatus } from "./status.js";
@@ -88,6 +89,6 @@ export function createDefaultActions(): CliActions {
       });
     },
     eval: notImplemented,
-    mcp: notImplemented,
+    mcp: startMcpServer,
   };
 }
