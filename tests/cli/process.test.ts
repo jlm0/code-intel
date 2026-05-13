@@ -50,6 +50,66 @@ describe("code-intel process behavior", () => {
     }
   });
 
+  it("indexes and queries the fixture repo through the built CLI", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-cli-index-"));
+    const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
+    try {
+      const indexResult = await execa("node", [
+        cliPath,
+        "index",
+        "--workspace",
+        fixturePath,
+        "--repo",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+      const indexPayload = JSON.parse(indexResult.stdout);
+      expect(indexPayload.stats.chunks).toBeGreaterThan(0);
+
+      const statusResult = await execa("node", [
+        cliPath,
+        "status",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+      expect(JSON.parse(statusResult.stdout).indexed).toBe(true);
+
+      const symbolResult = await execa("node", [
+        cliPath,
+        "find-symbol",
+        "calculateGivingTotal",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+      const symbolPayload = JSON.parse(symbolResult.stdout);
+      expect(symbolPayload.results[0].file).toBe("packages/core/src/tithe.ts");
+
+      const callersResult = await execa("node", [
+        cliPath,
+        "callers",
+        "calculateGivingTotal",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+      expect(JSON.parse(callersResult.stdout).results.map((item: { file?: string }) => item.file)).toContain(
+        "packages/core/src/ledger.ts",
+      );
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid arguments with stderr and nonzero exit", async () => {
     const result = await execa("node", [cliPath, "find-symbol"], {
       reject: false,
