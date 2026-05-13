@@ -1,53 +1,14 @@
 import { Command } from "commander";
 
-import { createDefaultActions } from "../core/actions.js";
+import { createDefaultActions } from "./actions.js";
 import { renderResult } from "./presenter.js";
-
-export interface CliRuntime {
-  stdout: Pick<NodeJS.WriteStream, "write" | "isTTY">;
-  stderr: Pick<NodeJS.WriteStream, "write" | "isTTY">;
-}
-
-export interface CliOptions {
-  workspace?: string;
-  repo?: string[];
-  indexPath?: string;
-  json: boolean;
-  quiet: boolean;
-  verbose: boolean;
-  limit?: number;
-  depth?: number;
-}
-
-export type CliAction = (options: CliOptions, ...args: string[]) => Promise<unknown>;
-
-export interface CliActions {
-  index: CliAction;
-  update: CliAction;
-  status: CliAction;
-  health: CliAction;
-  search: CliAction;
-  semantic: CliAction;
-  findSymbol: CliAction;
-  references: CliAction;
-  callers: CliAction;
-  callees: CliAction;
-  expandContext: CliAction;
-  getContext: CliAction;
-  tracePath: CliAction;
-  eval: CliAction;
-  mcp: CliAction;
-}
+import type { CliAction, CliActions, CliOptions, CliRuntime } from "./types.js";
 
 export interface CreateCliProgramOptions {
   actions?: Partial<CliActions>;
   stdout?: Pick<NodeJS.WriteStream, "write" | "isTTY">;
   stderr?: Pick<NodeJS.WriteStream, "write" | "isTTY">;
 }
-
-const notImplemented: CliAction = async () => ({
-  status: "not_implemented",
-});
 
 export function createCliProgram(options: CreateCliProgramOptions = {}): Command {
   const actions = { ...createDefaultActions(), ...options.actions };
@@ -112,11 +73,19 @@ function addCommonOptions(command: Command): void {
     .option("--workspace <path>", "Workspace root path.")
     .option("--repo <path...>", "Repository path to index or query.")
     .option("--index-path <path>", "Index artifact path.")
+    .option("--workspace-manifest <path>", "Optional code-intel workspace manifest with repository paths.")
+    .option("--include-ignored", "Index or search normally ignored generated, build, log, and local-dev paths.", false)
+    .option("--embedding-provider <provider>", "Embedding provider: hash or jina.")
+    .option("--embedding-model <model>", "Embedding model identifier for provider-backed embeddings.")
+    .option("--filter-repo <name>", "Restrict semantic search results to an indexed repo name.")
+    .option("--filter-package <name>", "Restrict semantic search results to a package name.")
+    .option("--file-kind <kind>", "Restrict semantic search results to source or test files.")
+    .option("--symbol-kind <kind>", "Restrict semantic search results to a symbol kind.")
     .option("--json", "Render machine-readable JSON output.", false)
     .option("--quiet", "Suppress non-error output.", false)
     .option("--verbose", "Render diagnostic output.", false)
-    .option("--limit <number>", "Limit result count.", parseInteger)
-    .option("--depth <number>", "Limit graph traversal depth.", parseInteger);
+    .option("--limit <number>", "Limit result count. Maximum 50.", parseInteger)
+    .option("--depth <number>", "Limit graph traversal depth. Maximum 4.", parseInteger);
 }
 
 function normalizeOptions(options: Record<string, unknown>): CliOptions {
@@ -124,11 +93,19 @@ function normalizeOptions(options: Record<string, unknown>): CliOptions {
     workspace: typeof options.workspace === "string" ? options.workspace : undefined,
     repo: Array.isArray(options.repo) ? options.repo.map(String) : undefined,
     indexPath: typeof options.indexPath === "string" ? options.indexPath : undefined,
+    workspaceManifest: typeof options.workspaceManifest === "string" ? options.workspaceManifest : undefined,
+    includeIgnored: options.includeIgnored === true,
+    embeddingProvider: typeof options.embeddingProvider === "string" ? options.embeddingProvider : undefined,
+    embeddingModel: typeof options.embeddingModel === "string" ? options.embeddingModel : undefined,
+    filterRepo: typeof options.filterRepo === "string" ? options.filterRepo : undefined,
+    filterPackage: typeof options.filterPackage === "string" ? options.filterPackage : undefined,
+    fileKind: typeof options.fileKind === "string" ? options.fileKind : undefined,
+    symbolKind: typeof options.symbolKind === "string" ? options.symbolKind : undefined,
     json: options.json === true,
     quiet: options.quiet === true,
     verbose: options.verbose === true,
-    limit: typeof options.limit === "number" ? options.limit : undefined,
-    depth: typeof options.depth === "number" ? options.depth : undefined,
+    limit: boundedOption(options.limit, 50, "limit"),
+    depth: boundedOption(options.depth, 4, "depth"),
   };
 }
 
@@ -138,4 +115,14 @@ function parseInteger(value: string): number {
     throw new Error(`Expected a positive integer, received ${value}`);
   }
   return parsed;
+}
+
+function boundedOption(value: unknown, max: number, name: string): number | undefined {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+  if (value > max) {
+    throw new Error(`Expected --${name} to be at most ${max}, received ${value}`);
+  }
+  return value;
 }

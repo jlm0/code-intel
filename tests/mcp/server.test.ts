@@ -48,7 +48,20 @@ describe("MCP stdio server", () => {
       await client.connect(transport);
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(["health", "find_symbol", "semantic_search", "get_context"]),
+        expect.arrayContaining([
+          "workspace_overview",
+          "health",
+          "search_text",
+          "semantic_search",
+          "find_symbol",
+          "get_symbol",
+          "get_references",
+          "get_callers",
+          "get_callees",
+          "expand_context",
+          "get_context",
+          "trace_path",
+        ]),
       );
 
       const health = await client.callTool({ name: "health", arguments: {} });
@@ -58,9 +71,107 @@ describe("MCP stdio server", () => {
         name: "find_symbol",
         arguments: { name: "calculateGivingTotal", limit: 5 },
       });
-      expect(parseToolText(symbol).result.results[0].file).toBe(
+      const symbolPayload = parseToolText(symbol);
+      expect(symbolPayload.result.results[0].file).toBe(
         "packages/core/src/tithe.ts",
       );
+
+      const externalCliRead = await execa("node", [
+        cliPath,
+        "find-symbol",
+        "calculateGivingTotal",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+      expect(JSON.parse(externalCliRead.stdout).results[0].file).toBe("packages/core/src/tithe.ts");
+
+      const symbolId = symbolPayload.result.results[0].id;
+      const overview = await client.callTool({ name: "workspace_overview", arguments: {} });
+      expect(parseToolText(overview).result.indexed).toBe(true);
+
+      const text = await client.callTool({
+        name: "search_text",
+        arguments: { pattern: "calculateGivingTotal(", limit: 5 },
+      });
+      expect(parseToolText(text).result.results.map((item: { file?: string }) => item.file)).toContain(
+        "packages/core/src/tithe.ts",
+      );
+
+      const semantic = await client.callTool({
+        name: "semantic_search",
+        arguments: { query: "giving receipt summary", limit: 5, packageName: "@fixture/core" },
+      });
+      const semanticPayload = parseToolText(semantic);
+      expect(semanticPayload.result.results.length).toBeGreaterThan(0);
+      expect(semanticPayload.result.results[0].metadata).not.toHaveProperty("content");
+
+      const context = await client.callTool({
+        name: "get_context",
+        arguments: { nodeId: semanticPayload.result.results[0].id, limit: 1 },
+      });
+      expect(parseToolText(context).result.results[0].excerpt).toMatch(/giving/i);
+
+      const references = await client.callTool({
+        name: "get_references",
+        arguments: { symbol: "calculateGivingTotal", limit: 10 },
+      });
+      expect(parseToolText(references).result.results.map((item: { file?: string }) => item.file)).toContain(
+        "packages/core/src/tithe.test.ts",
+      );
+
+      const callers = await client.callTool({
+        name: "get_callers",
+        arguments: { symbol: "calculateGivingTotal", limit: 10 },
+      });
+      expect(parseToolText(callers).result.results.map((item: { file?: string }) => item.file)).toContain(
+        "packages/core/src/ledger.ts",
+      );
+
+      const callees = await client.callTool({
+        name: "get_callees",
+        arguments: { symbol: "summarize", limit: 10 },
+      });
+      expect(parseToolText(callees).result.results.map((item: { file?: string }) => item.file)).toContain(
+        "packages/core/src/tithe.ts",
+      );
+
+      const expanded = await client.callTool({
+        name: "expand_context",
+        arguments: { nodeId: semanticPayload.result.results[0].id, depth: 1, limit: 10 },
+      });
+      expect(parseToolText(expanded).result.results.length).toBeGreaterThan(0);
+
+      const getSymbol = await client.callTool({
+        name: "get_symbol",
+        arguments: { idOrName: symbolId },
+      });
+      expect(parseToolText(getSymbol).result.results[0].id).toBe(symbolId);
+
+      const summarize = await client.callTool({
+        name: "find_symbol",
+        arguments: { name: "summarize", limit: 1 },
+      });
+      const trace = await client.callTool({
+        name: "trace_path",
+        arguments: {
+          fromId: parseToolText(summarize).result.results[0].id,
+          toId: symbolId,
+          limit: 10,
+        },
+      });
+      expect(parseToolText(trace).result.results.map((item: { id: string }) => item.id)).toContain(symbolId);
+
+      const invalid = await client.callTool({
+        name: "find_symbol",
+        arguments: { name: "", limit: 5 },
+      });
+      expect(invalid.isError).toBe(true);
+
+      const healthAfterQuery = await client.callTool({ name: "health", arguments: {} });
+      expect(parseToolText(healthAfterQuery).tool).toBe("health");
     } finally {
       await client.close();
       await rm(indexPath, { recursive: true, force: true });

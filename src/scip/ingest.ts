@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
 import { deserializeSCIP } from "@c4312/scip";
 
@@ -30,8 +30,13 @@ export interface ScipRange {
 }
 
 const definitionRole = 1;
+const maxScipFileBytes = 128_000_000;
 
 export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
+  const scipSize = (await stat(outputPath)).size;
+  if (scipSize > maxScipFileBytes) {
+    throw new Error(`SCIP file exceeds ${maxScipFileBytes} bytes: ${outputPath}`);
+  }
   const index = deserializeSCIP(await readFile(outputPath));
   const definitions: ScipDefinition[] = [];
   const definitionBySymbol = new Map<string, ScipDefinition>();

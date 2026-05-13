@@ -110,6 +110,50 @@ describe("code-intel process behavior", () => {
     }
   });
 
+  it("serializes concurrent CLI reads against the same Ladybug index", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-cli-concurrent-"));
+    const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
+    try {
+      await execa("node", [
+        cliPath,
+        "index",
+        "--workspace",
+        fixturePath,
+        "--repo",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+
+      const baseCommands = [
+        ["find-symbol", "calculateGivingTotal"],
+        ["semantic", "giving receipt summary"],
+        ["callers", "calculateGivingTotal"],
+        ["references", "calculateGivingTotal"],
+        ["callees", "summarize"],
+      ];
+      const commands = Array.from({ length: 3 }, () => baseCommands).flat();
+      const results = await Promise.all(
+        commands.map((command) =>
+          execa("node", [
+            cliPath,
+            ...command,
+            "--workspace",
+            fixturePath,
+            "--index-path",
+            indexPath,
+            "--json",
+          ]),
+        ),
+      );
+
+      expect(results.every((result) => JSON.parse(result.stdout).results.length > 0)).toBe(true);
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid arguments with stderr and nonzero exit", async () => {
     const result = await execa("node", [cliPath, "find-symbol"], {
       reject: false,
@@ -117,5 +161,14 @@ describe("code-intel process behavior", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("missing required argument");
+  });
+
+  it("rejects unbounded result limits", async () => {
+    const result = await execa("node", [cliPath, "find-symbol", "value", "--limit", "999"], {
+      reject: false,
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Expected --limit to be at most 50");
   });
 });

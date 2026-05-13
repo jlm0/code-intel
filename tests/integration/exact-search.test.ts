@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { searchText } from "../../src/search/exact.js";
@@ -20,5 +24,33 @@ describe("exact search", () => {
     expect(results.results.map((result) => result.file)).toContain(
       "packages/core/src/tithe.ts",
     );
+  });
+
+  it("treats exact patterns as literals instead of regular expressions", async () => {
+    const results = await searchText({
+      pattern: "calculateGivingTotal(",
+      repoPaths: [fixturePath],
+      limit: 10,
+    });
+
+    expect(results.results.map((result) => result.file)).toContain(
+      "packages/core/src/tithe.ts",
+    );
+  });
+
+  it("treats patterns that start with a dash as search text", async () => {
+    const repoPath = await mkdtemp(join(tmpdir(), "code-intel-exact-dash-"));
+    try {
+      await writeFile(join(repoPath, "flags.ts"), "export const flag = '--json';\n");
+      const results = await searchText({
+        pattern: "--json",
+        repoPaths: [repoPath],
+        limit: 5,
+      });
+
+      expect(results.results.map((result) => result.file)).toContain("flags.ts");
+    } finally {
+      await rm(repoPath, { recursive: true, force: true });
+    }
   });
 });

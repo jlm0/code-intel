@@ -3,6 +3,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { normalizeRelativePath } from "../core/ids.js";
+import { directoryIsIgnored } from "./ignore.js";
 
 const sourceExtensions = new Set([
   ".ts",
@@ -15,19 +16,11 @@ const sourceExtensions = new Set([
   ".cjs",
 ]);
 
-const ignoredDirectories = new Set([
-  ".git",
-  ".next",
-  ".turbo",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
-
 export interface DiscoverWorkspaceInput {
   workspaceRoot: string;
   repoPaths: string[];
+  includeIgnored?: boolean;
+  workspaceManifestPath?: string;
 }
 
 export interface DiscoveredWorkspace {
@@ -53,6 +46,8 @@ export interface DiscoveredPackage {
   exports: unknown;
   dependencies: Record<string, string>;
   sourceRoots: string[];
+  includePatterns?: string[];
+  excludePatterns: string[];
 }
 
 export interface DiscoveredFile {
@@ -68,21 +63,36 @@ export async function discoverWorkspace(
   const workspaceRoot = resolve(input.workspaceRoot);
   const rootPackage = await readPackageJson(workspaceRoot);
   const workspaceName = rootPackage?.name ?? basename(workspaceRoot);
+  const manifestRepoPaths = await readWorkspaceManifest(workspaceRoot, input.workspaceManifestPath);
+  const repoPaths = input.repoPaths.length > 0
+    ? input.repoPaths
+    : manifestRepoPaths.length > 0
+      ? manifestRepoPaths
+      : [workspaceRoot];
   const repos = await Promise.all(
-    input.repoPaths.map((repoPath) => discoverRepo(workspaceRoot, resolve(workspaceRoot, repoPath))),
+    repoPaths.map((repoPath) =>
+      discoverRepo(workspaceRoot, resolve(workspaceRoot, repoPath), {
+        includeIgnored: input.includeIgnored === true,
+      }),
+    ),
   );
 
   return { workspaceName, workspaceRoot, repos };
 }
 
-async function discoverRepo(workspaceRoot: string, repoPath: string): Promise<DiscoveredRepo> {
+async function discoverRepo(
+  workspaceRoot: string,
+  repoPath: string,
+  options: DiscoverOptions,
+): Promise<DiscoveredRepo> {
+  await ensureDirectory(repoPath, "Repository path");
   const repoPackage = await readPackageJson(repoPath);
   const packageManager = await detectPackageManager(repoPath);
-  const packagePaths = await discoverPackagePaths(repoPath, repoPackage);
+  const packagePaths = await discoverPackagePaths(repoPath, repoPackage, options);
   const packages = await Promise.all(
     packagePaths.map((packagePath) => discoverPackage(workspaceRoot, packagePath)),
   );
-  const files = await discoverSourceFiles(repoPath, packages);
+  const files = await discoverSourceFiles(repoPath, packages, options);
 
   return {
     name: basename(repoPath),
@@ -95,31 +105,38 @@ async function discoverRepo(workspaceRoot: string, repoPath: string): Promise<Di
   };
 }
 
-async function discoverPackagePaths(repoPath: string, packageJson: PackageJson | undefined): Promise<string[]> {
+async function discoverPackagePaths(
+  repoPath: string,
+  packageJson: PackageJson | undefined,
+  options: DiscoverOptions,
+): Promise<string[]> {
   const packagePaths = new Set<string>();
-  packagePaths.add(repoPath);
-
   const workspaces = normalizeWorkspacePatterns(packageJson?.workspaces);
-  for (const pattern of workspaces) {
-    if (!pattern.endsWith("/*")) {
-      continue;
-    }
-    const parent = join(repoPath, pattern.slice(0, -2));
-    for (const entry of await safeReaddir(parent)) {
-      const candidate = join(parent, entry.name);
-      if (entry.isDirectory() && (await readPackageJson(candidate))) {
-        packagePaths.add(candidate);
+
+  if (workspaces.length > 0) {
+    for (const pattern of workspaces) {
+      if (!pattern.endsWith("/*")) {
+        continue;
+      }
+      const parent = join(repoPath, pattern.slice(0, -2));
+      for (const entry of await safeReaddir(parent)) {
+        const candidate = join(parent, entry.name);
+        if (entry.isDirectory() && (await readPackageJson(candidate))) {
+          packagePaths.add(candidate);
+        }
       }
     }
-  }
-
-  if (packagePaths.size === 1) {
-    for (const packageJsonPath of await findPackageJsonFiles(repoPath)) {
+    if (packagePaths.size === 0) {
+      packagePaths.add(repoPath);
+    }
+  } else {
+    packagePaths.add(repoPath);
+    for (const packageJsonPath of await findPackageJsonFiles(repoPath, options)) {
       packagePaths.add(dirname(packageJsonPath));
     }
   }
 
-  return [...packagePaths].filter((packagePath) => packagePath !== repoPath || packagePaths.size === 1);
+  return [...packagePaths].sort();
 }
 
 async function discoverPackage(
@@ -127,6 +144,7 @@ async function discoverPackage(
   packagePath: string,
 ): Promise<DiscoveredPackage> {
   const packageJson = await readPackageJson(packagePath);
+  const projectConfig = await readProjectConfig(packagePath);
   return {
     name: packageJson?.name ?? basename(packagePath),
     path: packagePath,
@@ -137,23 +155,29 @@ async function discoverPackage(
       ...(packageJson?.devDependencies ?? {}),
       ...(packageJson?.peerDependencies ?? {}),
     },
-    sourceRoots: [join(packagePath, "src")],
+    sourceRoots: await inferSourceRoots(packagePath, projectConfig),
+    includePatterns: projectConfig?.include,
+    excludePatterns: projectConfig?.exclude ?? [],
   };
 }
 
 async function discoverSourceFiles(
   repoPath: string,
   packages: DiscoveredPackage[],
+  options: DiscoverOptions,
 ): Promise<DiscoveredFile[]> {
   const packageByPath = [...packages].sort((left, right) => right.path.length - left.path.length);
   const files: DiscoveredFile[] = [];
 
-  await walk(repoPath, async (absolutePath) => {
+  await walk(repoPath, options, async (absolutePath) => {
     const extension = getExtension(absolutePath);
     if (!sourceExtensions.has(extension)) {
       return;
     }
     const matchingPackage = packageByPath.find((pkg) => absolutePath.startsWith(`${pkg.path}/`));
+    if (matchingPackage && !packageIncludesFile(matchingPackage, absolutePath)) {
+      return;
+    }
     files.push({
       absolutePath,
       relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
@@ -165,23 +189,23 @@ async function discoverSourceFiles(
   return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
-async function walk(root: string, onFile: (path: string) => Promise<void>): Promise<void> {
+async function walk(root: string, options: DiscoverOptions, onFile: (path: string) => Promise<void>): Promise<void> {
   for (const entry of await safeReaddir(root)) {
-    if (ignoredDirectories.has(entry.name)) {
+    if (!options.includeIgnored && directoryIsIgnored(entry.name)) {
       continue;
     }
     const absolutePath = join(root, entry.name);
     if (entry.isDirectory()) {
-      await walk(absolutePath, onFile);
+      await walk(absolutePath, options, onFile);
     } else if (entry.isFile()) {
       await onFile(absolutePath);
     }
   }
 }
 
-async function findPackageJsonFiles(root: string): Promise<string[]> {
+async function findPackageJsonFiles(root: string, options: DiscoverOptions): Promise<string[]> {
   const files: string[] = [];
-  await walk(root, async (absolutePath) => {
+  await walk(root, options, async (absolutePath) => {
     if (basename(absolutePath) === "package.json") {
       files.push(absolutePath);
     }
@@ -208,9 +232,188 @@ function detectCommit(repoPath: string): string {
 async function readPackageJson(path: string): Promise<PackageJson | undefined> {
   try {
     return JSON.parse(await readFile(join(path, "package.json"), "utf8")) as PackageJson;
-  } catch {
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`Invalid package.json at ${join(path, "package.json")}: ${error.message}`);
+    }
     return undefined;
   }
+}
+
+async function readProjectConfig(path: string): Promise<ProjectConfig | undefined> {
+  for (const filename of ["tsconfig.json", "jsconfig.json"]) {
+    try {
+      return parseJsonc(await readFile(join(path, filename), "utf8")) as ProjectConfig;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(`Invalid ${filename} at ${join(path, filename)}: ${error.message}`);
+      }
+    }
+  }
+  return undefined;
+}
+
+async function readWorkspaceManifest(workspaceRoot: string, manifestPath: string | undefined): Promise<string[]> {
+  if (!manifestPath) {
+    return [];
+  }
+  const resolvedPath = resolve(workspaceRoot, manifestPath);
+  const manifest = JSON.parse(await readFile(resolvedPath, "utf8")) as WorkspaceManifest;
+  const repos = Array.isArray(manifest.repoPaths)
+    ? manifest.repoPaths
+    : Array.isArray(manifest.repos)
+      ? manifest.repos
+      : [];
+  return repos
+    .map((repo) => {
+      if (typeof repo === "string") {
+        return repo;
+      }
+      if (repo && typeof repo === "object" && typeof (repo as { path?: unknown }).path === "string") {
+        return (repo as { path: string }).path;
+      }
+      return undefined;
+    })
+    .filter((repo): repo is string => typeof repo === "string" && repo.length > 0);
+}
+
+async function inferSourceRoots(packagePath: string, config: ProjectConfig | undefined): Promise<string[]> {
+  const roots = new Set<string>();
+  const compilerOptions = config?.compilerOptions;
+  if (typeof compilerOptions?.rootDir === "string") {
+    roots.add(resolve(packagePath, compilerOptions.rootDir));
+  }
+  if (Array.isArray(compilerOptions?.rootDirs)) {
+    for (const rootDir of compilerOptions.rootDirs) {
+      if (typeof rootDir === "string") {
+        roots.add(resolve(packagePath, rootDir));
+      }
+    }
+  }
+  for (const include of config?.include ?? []) {
+    const root = globRoot(include);
+    if (root) {
+      roots.add(resolve(packagePath, root));
+    }
+  }
+  if (roots.size === 0) {
+    const sourceRoot = join(packagePath, "src");
+    roots.add(await directoryExists(sourceRoot) ? sourceRoot : packagePath);
+  }
+  return [...roots].sort();
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function packageIncludesFile(pkg: DiscoveredPackage, absolutePath: string): boolean {
+  const relativePath = normalizeRelativePath(relative(pkg.path, absolutePath));
+  if (relativePath.startsWith("..")) {
+    return false;
+  }
+  if (pkg.includePatterns && !pkg.includePatterns.some((pattern) => matchesGlob(pattern, relativePath))) {
+    return false;
+  }
+  return !pkg.excludePatterns.some((pattern) => matchesGlob(pattern, relativePath));
+}
+
+function globRoot(pattern: string): string {
+  const normalized = normalizeRelativePath(pattern).replace(/^\.\//, "");
+  const firstGlob = normalized.search(/[*?{[]/);
+  const prefix = firstGlob === -1 ? normalized : normalized.slice(0, firstGlob);
+  const cleaned = prefix.replace(/\/?[^/]*$/, "");
+  return cleaned || ".";
+}
+
+function matchesGlob(pattern: string, relativePath: string): boolean {
+  let normalized = normalizeRelativePath(pattern).replace(/^\.\//, "");
+  if (!/[*?{[]/.test(normalized) && !getExtension(normalized)) {
+    normalized = `${normalized.replace(/\/$/, "")}/**`;
+  }
+  return globToRegExp(normalized).test(relativePath);
+}
+
+function globToRegExp(pattern: string): RegExp {
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    const next = pattern[index + 1];
+    const afterNext = pattern[index + 2];
+    if (char === "*" && next === "*" && afterNext === "/") {
+      source += "(?:.*/)?";
+      index += 2;
+    } else if (char === "*" && next === "*") {
+      source += ".*";
+      index += 1;
+    } else if (char === "*") {
+      source += "[^/]*";
+    } else if (char === "?") {
+      source += "[^/]";
+    } else {
+      source += escapeRegExp(char);
+    }
+  }
+  return new RegExp(`^${source}$`);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function parseJsonc(text: string): unknown {
+  return JSON.parse(removeTrailingCommas(stripJsonComments(text)));
+}
+
+function stripJsonComments(text: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      output += char;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      while (index < text.length && text[index] !== "\n") {
+        index += 1;
+      }
+      output += "\n";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) {
+        index += 1;
+      }
+      index += 1;
+      continue;
+    }
+    output += char;
+  }
+  return output;
+}
+
+function removeTrailingCommas(text: string): string {
+  return text.replace(/,\s*([}\]])/g, "$1");
 }
 
 async function safeReaddir(path: string) {
@@ -249,6 +452,20 @@ function languageForPath(path: string): DiscoveredFile["language"] {
   return "javascript";
 }
 
+async function ensureDirectory(path: string, label: string): Promise<void> {
+  try {
+    const stats = await stat(path);
+    if (!stats.isDirectory()) {
+      throw new Error(`${label} is not a directory: ${path}`);
+    }
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error(`${label} does not exist: ${path}`);
+    }
+    throw error;
+  }
+}
+
 interface PackageJson {
   name?: string;
   workspaces?: unknown;
@@ -256,4 +473,22 @@ interface PackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+}
+
+interface ProjectConfig {
+  compilerOptions?: {
+    rootDir?: unknown;
+    rootDirs?: unknown;
+  };
+  include?: string[];
+  exclude?: string[];
+}
+
+interface WorkspaceManifest {
+  repoPaths?: unknown[];
+  repos?: Array<string | { path?: unknown }>;
+}
+
+interface DiscoverOptions {
+  includeIgnored: boolean;
 }

@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 const Parser = require("tree-sitter");
 const JavaScript = require("tree-sitter-javascript");
 const TypeScript = require("tree-sitter-typescript");
+const maxChunkContentBytes = 64_000;
 
 export interface ChunkSourceFileInput {
   relativePath: string;
@@ -38,8 +39,13 @@ const chunkNodeTypes = new Set([
 
 export function chunkSourceFile(input: ChunkSourceFileInput): SourceChunk[] {
   const parser = new Parser();
-  parser.setLanguage(languageForFile(input.relativePath));
-  const tree = parser.parse(input.content);
+  let tree: { rootNode: TreeSitterNode };
+  try {
+    parser.setLanguage(languageForFile(input.relativePath));
+    tree = parser.parse(input.content);
+  } catch {
+    return [fallbackChunk(input)];
+  }
   const chunks: SourceChunk[] = [];
 
   visit(tree.rootNode, (node: TreeSitterNode) => {
@@ -108,7 +114,7 @@ function extractCallableName(text: string): string | undefined {
 
 function sourceForNode(source: string, node: TreeSitterNode): string {
   const lines = source.split(/\r?\n/);
-  return lines.slice(node.startPosition.row, node.endPosition.row + 1).join("\n");
+  return truncateContent(lines.slice(node.startPosition.row, node.endPosition.row + 1).join("\n"));
 }
 
 function fallbackChunk(input: ChunkSourceFileInput): SourceChunk {
@@ -123,10 +129,17 @@ function fallbackChunk(input: ChunkSourceFileInput): SourceChunk {
       startColumn: 0,
       endColumn: lines.at(-1)?.length ?? 0,
     },
-    content: input.content,
+    content: truncateContent(input.content),
     contentHash: createHash("sha256").update(input.content).digest("hex"),
     calls: [],
   };
+}
+
+function truncateContent(content: string): string {
+  if (Buffer.byteLength(content, "utf8") <= maxChunkContentBytes) {
+    return content;
+  }
+  return `${content.slice(0, maxChunkContentBytes)}\n[truncated]`;
 }
 
 function kindForNode(type: string, relativePath: string): SourceChunk["kind"] {

@@ -2,18 +2,24 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import type { CliOptions } from "../cli/program.js";
-import { createRuntimeContext } from "../core/context.js";
+import { createRuntimeContext, type RuntimeOptions } from "../core/context.js";
 import { runHealth } from "../core/health.js";
 import { getStatus } from "../core/status.js";
-import { createQueryEngine } from "../query/query-engine.js";
+import { createQueryEngine, type QueryEngine } from "../query/query-engine.js";
 import { searchText } from "../search/exact.js";
-import { McpToolPayloadSchema, schemaVersion } from "../schema/schemas.js";
+import {
+  HealthResultSchema,
+  McpToolPayloadSchema,
+  QueryResultSchema,
+  schemaVersion,
+  StatusResultSchema,
+} from "../schema/schemas.js";
 
-export async function startMcpServer(options: CliOptions): Promise<void> {
+export async function startMcpServer(options: RuntimeOptions): Promise<void> {
   const context = createRuntimeContext(options);
-  const queryEngine = createQueryEngine({ indexPath: context.indexPath });
   const repoPaths = context.repos.length > 0 ? context.repos : [context.workspace];
+  let queryEngine: QueryEngine | undefined;
+  let queryEngineCloseTimer: NodeJS.Timeout | undefined;
   const server = new McpServer({
     name: "code-intel",
     version: "0.1.0",
@@ -25,7 +31,7 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       description: "Return current code intelligence index status and indexed repositories.",
       inputSchema: {},
     },
-    async () => toolPayload("workspace_overview", await getStatus(options)),
+    async () => toolPayload("workspace_overview", await getStatus(options), StatusResultSchema),
   );
 
   server.registerTool(
@@ -34,7 +40,10 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       description: "Run code intelligence environment and index health checks.",
       inputSchema: {},
     },
-    async () => toolPayload("health", await runHealth(options)),
+    async () => {
+      await closeQueryEngine();
+      return toolPayload("health", await runHealth(options), HealthResultSchema);
+    },
   );
 
   server.registerTool(
@@ -49,7 +58,8 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
     async ({ pattern, limit }) =>
       toolPayload(
         "search_text",
-        await searchText({ pattern, repoPaths, limit: limit ?? 20 }),
+        await searchText({ pattern, repoPaths, limit: limit ?? 20, includeIgnored: context.includeIgnored }),
+        QueryResultSchema,
       ),
   );
 
@@ -60,13 +70,22 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       inputSchema: {
         query: z.string().min(1),
         limit: z.number().int().min(1).max(50).optional(),
+        repo: z.string().min(1).optional(),
+        packageName: z.string().min(1).optional(),
+        fileKind: z.string().min(1).optional(),
+        symbolKind: z.string().min(1).optional(),
       },
     },
-    async ({ query, limit }) =>
-      toolPayload(
-        "semantic_search",
-        await queryEngine.semanticSearch(query, { limit: limit ?? 10 }),
-      ),
+    async ({ query, limit, repo, packageName, fileKind, symbolKind }) =>
+      toolPayload("semantic_search", await withQueryEngine((queryEngine) =>
+        queryEngine.semanticSearch(query, {
+          limit: limit ?? 10,
+          repo,
+          packageName,
+          fileKind,
+          symbolKind,
+        }),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -79,7 +98,9 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ name, limit }) =>
-      toolPayload("find_symbol", await queryEngine.findSymbol(name, { limit: limit ?? 20 })),
+      toolPayload("find_symbol", await withQueryEngine((queryEngine) =>
+        queryEngine.findSymbol(name, { limit: limit ?? 20 }),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -91,7 +112,9 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ idOrName }) =>
-      toolPayload("get_symbol", await queryEngine.findSymbol(idOrName, { limit: 1 })),
+      toolPayload("get_symbol", await withQueryEngine((queryEngine) =>
+        queryEngine.findSymbol(idOrName, { limit: 1 }),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -104,10 +127,9 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ symbol, limit }) =>
-      toolPayload(
-        "get_references",
-        await queryEngine.getReferences(symbol, { limit: limit ?? 20 }),
-      ),
+      toolPayload("get_references", await withQueryEngine((queryEngine) =>
+        queryEngine.getReferences(symbol, { limit: limit ?? 20 }),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -120,7 +142,9 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ symbol, limit }) =>
-      toolPayload("get_callers", await queryEngine.getCallers(symbol, { limit: limit ?? 20 })),
+      toolPayload("get_callers", await withQueryEngine((queryEngine) =>
+        queryEngine.getCallers(symbol, { limit: limit ?? 20 }),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -133,7 +157,9 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ symbol, limit }) =>
-      toolPayload("get_callees", await queryEngine.getCallees(symbol, { limit: limit ?? 20 })),
+      toolPayload("get_callees", await withQueryEngine((queryEngine) =>
+        queryEngine.getCallees(symbol, { limit: limit ?? 20 }),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -147,13 +173,12 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ nodeId, depth, limit }) =>
-      toolPayload(
-        "expand_context",
-        await queryEngine.expandContext(nodeId, {
+      toolPayload("expand_context", await withQueryEngine((queryEngine) =>
+        queryEngine.expandContext(nodeId, {
           depth: depth ?? 1,
           limit: limit ?? 20,
         }),
-      ),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -166,7 +191,9 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ nodeId, limit }) =>
-      toolPayload("get_context", await queryEngine.getContext(nodeId, { limit: limit ?? 5 })),
+      toolPayload("get_context", await withQueryEngine((queryEngine) =>
+        queryEngine.getContext(nodeId, { limit: limit ?? 5 }),
+      ), QueryResultSchema),
   );
 
   server.registerTool(
@@ -180,20 +207,52 @@ export async function startMcpServer(options: CliOptions): Promise<void> {
       },
     },
     async ({ fromId, toId, limit }) =>
-      toolPayload(
-        "trace_path",
-        await queryEngine.tracePath(fromId, toId, { limit: limit ?? 20 }),
-      ),
+      toolPayload("trace_path", await withQueryEngine((queryEngine) =>
+        queryEngine.tracePath(fromId, toId, { limit: limit ?? 20 }),
+      ), QueryResultSchema),
   );
 
   await server.connect(new StdioServerTransport());
+
+  async function withQueryEngine<T>(callback: (engine: QueryEngine) => Promise<T>): Promise<T> {
+    if (queryEngineCloseTimer) {
+      clearTimeout(queryEngineCloseTimer);
+      queryEngineCloseTimer = undefined;
+    }
+    queryEngine ??= createQueryEngine({
+        indexPath: context.indexPath,
+        embeddingProviderName: context.embeddingProvider,
+        embeddingModel: context.embeddingModel,
+      });
+    try {
+      return await callback(queryEngine);
+    } finally {
+      queryEngineCloseTimer = setTimeout(() => {
+        void closeQueryEngine();
+      }, 1_000);
+      queryEngineCloseTimer.unref?.();
+    }
+  }
+
+  async function closeQueryEngine(): Promise<void> {
+    if (queryEngineCloseTimer) {
+      clearTimeout(queryEngineCloseTimer);
+      queryEngineCloseTimer = undefined;
+    }
+    if (queryEngine) {
+      const engine = queryEngine;
+      queryEngine = undefined;
+      await engine.close();
+    }
+  }
 }
 
-function toolPayload(tool: string, result: unknown) {
+function toolPayload<T>(tool: string, result: T, resultSchema: z.ZodType<T>) {
+  const parsedResult = resultSchema.parse(result);
   const payload = McpToolPayloadSchema.parse({
     schemaVersion,
     tool,
-    result,
+    result: parsedResult,
   });
   return {
     content: [

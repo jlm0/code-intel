@@ -1,28 +1,25 @@
 import { spawn } from "node:child_process";
 import { relative, resolve } from "node:path";
 
+import { truncateUtf8Bytes } from "../core/text.js";
 import { schemaVersion, type QueryResult } from "../schema/schemas.js";
 import { normalizeRelativePath } from "../core/ids.js";
+import { defaultRipgrepIgnoreGlobs } from "../workspace/ignore.js";
 
-const defaultGlobs = [
-  "!node_modules",
-  "!dist",
-  "!build",
-  "!.next",
-  "!coverage",
-  "!.git",
-];
+const maxRipgrepJsonLineBytes = 1_000_000;
+const maxExcerptBytes = 16_000;
 
 export interface SearchTextInput {
   pattern: string;
   repoPaths: string[];
   limit: number;
+  includeIgnored?: boolean;
 }
 
 export async function searchText(input: SearchTextInput): Promise<QueryResult> {
   const results: QueryResult["results"] = [];
   for (const repoPath of input.repoPaths.map((path) => resolve(path))) {
-    const matches = await runRipgrep(input.pattern, repoPath, input.limit - results.length);
+    const matches = await runRipgrep(input.pattern, repoPath, input.limit - results.length, input.includeIgnored === true);
     results.push(...matches);
     if (results.length >= input.limit) {
       break;
@@ -40,6 +37,7 @@ async function runRipgrep(
   pattern: string,
   repoPath: string,
   limit: number,
+  includeIgnored: boolean,
 ): Promise<QueryResult["results"]> {
   if (limit <= 0) {
     return [];
@@ -47,63 +45,114 @@ async function runRipgrep(
 
   const args = [
     "--json",
+    "--fixed-strings",
+    "--max-columns",
+    String(maxExcerptBytes),
     "--hidden",
-    ...defaultGlobs.flatMap((glob) => ["--glob", glob]),
+    ...(includeIgnored ? [] : defaultRipgrepIgnoreGlobs().flatMap((glob) => ["--glob", glob])),
+    "--",
     pattern,
     repoPath,
   ];
 
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
+    const results: QueryResult["results"] = [];
+    let stdoutBuffer = "";
     let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      rejectOnce(new Error("rg timed out after 10000ms"));
+    }, 10_000);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdout += chunk;
+      stdoutBuffer += chunk;
+      if (Buffer.byteLength(stdoutBuffer, "utf8") > maxRipgrepJsonLineBytes) {
+        child.kill("SIGTERM");
+        rejectOnce(new Error("rg JSON line exceeded maximum supported size"));
+        return;
+      }
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const match = parseRipgrepJsonLine(line, repoPath);
+        if (match) {
+          results.push(match);
+        }
+        if (results.length >= limit) {
+          child.kill("SIGTERM");
+          break;
+        }
+      }
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", rejectPromise);
+    child.on("error", rejectOnce);
     child.on("close", (code) => {
-      if (code !== 0 && code !== 1) {
-        rejectPromise(new Error(stderr || `rg exited with status ${code}`));
+      clearTimeout(timeout);
+      if (settled) {
         return;
       }
-      resolvePromise(parseRipgrepJson(stdout, repoPath, limit));
+      const finalMatch = parseRipgrepJsonLine(stdoutBuffer, repoPath);
+      if (finalMatch && results.length < limit) {
+        results.push(finalMatch);
+      }
+      if (code !== 0 && code !== 1) {
+        if (results.length > 0) {
+          resolveOnce(results.slice(0, limit));
+          return;
+        }
+        rejectOnce(new Error(stderr || `rg exited with status ${code}`));
+        return;
+      }
+      resolveOnce(results.slice(0, limit));
     });
+
+    function resolveOnce(value: QueryResult["results"]): void {
+      if (!settled) {
+        settled = true;
+        resolvePromise(value);
+      }
+    }
+
+    function rejectOnce(error: Error): void {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        rejectPromise(error);
+      }
+    }
   });
 }
 
-function parseRipgrepJson(stdout: string, repoPath: string, limit: number): QueryResult["results"] {
-  const results: QueryResult["results"] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim()) {
-      continue;
-    }
+function parseRipgrepJsonLine(line: string, repoPath: string): QueryResult["results"][number] | undefined {
+  if (!line.trim()) {
+    return undefined;
+  }
+  try {
     const event = JSON.parse(line) as RipgrepEvent;
     if (event.type !== "match") {
-      continue;
+      return undefined;
     }
     const absolutePath = event.data.path.text;
     const relativePath = normalizeRelativePath(relative(repoPath, absolutePath));
     const lineNumber = event.data.line_number;
-    results.push({
+    return {
       id: `search:${relativePath}#${lineNumber}`,
       kind: "File",
       repo: repoPath.split("/").at(-1) ?? repoPath,
       file: relativePath,
       range: { startLine: lineNumber, endLine: lineNumber },
       matchedSignals: ["exact_text"],
-      excerpt: event.data.lines.text.trimEnd(),
+      excerpt: truncateUtf8Bytes(event.data.lines.text.trimEnd(), maxExcerptBytes),
       metadata: { absolutePath },
-    });
-    if (results.length >= limit) {
-      break;
-    }
+    };
+  } catch {
+    return undefined;
   }
-  return results;
 }
 
 interface RipgrepEvent {

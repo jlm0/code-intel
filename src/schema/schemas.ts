@@ -103,6 +103,11 @@ export const IndexManifestSchema = z.object({
     edges: z.number().int().min(0),
     chunks: z.number().int().min(0),
   }),
+  embedding: z.object({
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    dimension: z.number().int().min(1),
+  }),
   health: z.array(HealthCheckSchema),
 });
 
@@ -138,6 +143,22 @@ export const QueryResultSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   query: z.string(),
   results: z.array(QueryResultItemSchema),
+});
+
+export const HealthResultSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  status: z.enum(["ok", "warn", "fail"]),
+  indexPath: z.string().min(1),
+  checks: z.array(HealthCheckSchema),
+});
+
+export const StatusResultSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  indexed: z.boolean(),
+  indexPath: z.string().min(1),
+  manifest: IndexManifestSchema.optional(),
+  manifestPath: z.string().optional(),
+  repos: z.array(z.unknown()).optional(),
 });
 
 export const McpToolPayloadSchema = z.object({

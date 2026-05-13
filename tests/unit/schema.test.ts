@@ -46,6 +46,7 @@ describe("schema contracts", () => {
         indexPath: "/tmp/index",
         repos: [],
         stats: { nodes: 0, edges: 0, chunks: 0 },
+        embedding: { provider: "hash", model: "local-hash-v1", dimension: 64 },
         health: [],
       }),
     ).toMatchObject({ schemaVersion });

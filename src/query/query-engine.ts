@@ -1,176 +1,162 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { truncateUtf8Bytes } from "../core/text.js";
 import { LadybugGraphStore } from "../graph/ladybug-store.js";
+import type { CodeGraphRepository, SemanticSearchFilters, StoredCodeNode } from "../graph/repository.js";
 import {
+  IndexManifestSchema,
+  QueryResultSchema,
   schemaVersion,
   type CodeEdge,
   type CodeNode,
   type QueryResult,
   type QueryResultItem,
 } from "../schema/schemas.js";
-import { embedText } from "../vectors/embedding.js";
+import {
+  createEmbeddingProvider,
+  type EmbeddingProvider,
+} from "../vectors/embedding.js";
 
 export interface QueryEngineOptions {
   indexPath: string;
+  embeddingProviderName?: string;
+  embeddingModel?: string;
+  embeddingProvider?: EmbeddingProvider;
 }
 
 export interface QueryLimitOptions {
   limit: number;
 }
 
+export interface SemanticQueryOptions extends QueryLimitOptions, SemanticSearchFilters {}
+
 export function createQueryEngine(options: QueryEngineOptions): QueryEngine {
-  return new QueryEngine(new LadybugGraphStore(options.indexPath));
+  return new QueryEngine(
+    new LadybugGraphStore(options.indexPath),
+    resolveEmbeddingProviderForIndex(options),
+  );
 }
 
 export class QueryEngine {
-  constructor(private readonly store: LadybugGraphStore) {}
+  constructor(
+    private readonly store: CodeGraphRepository,
+    private readonly embeddingProvider: Promise<EmbeddingProvider>,
+  ) {}
+
+  async close(): Promise<void> {
+    await this.store.close();
+  }
 
   async findSymbol(name: string, options: QueryLimitOptions): Promise<QueryResult> {
-    const nodes = await this.store.getNodes();
-    const needle = name.toLowerCase();
-    const results = nodes
-      .filter((node) => isSymbolLike(node))
-      .filter((node) => node.name?.toLowerCase().includes(needle) || node.id === name)
-      .sort((left, right) => symbolRank(left, needle) - symbolRank(right, needle))
-      .slice(0, options.limit)
-      .map((node) => nodeToResult(node, ["symbol_name"]));
-
-    return { schemaVersion, query: name, results };
+    const nodes = await this.store.findSymbols(name, options.limit);
+    return parseQueryResult({
+      schemaVersion,
+      query: name,
+      results: nodes.map((node) => nodeToResult(node, ["symbol_name"])),
+    });
   }
 
   async getCallers(symbol: string, options: QueryLimitOptions): Promise<QueryResult> {
-    return this.relatedTo(symbol, "CALLS", options, "callers");
+    return this.relatedTo(symbol, "CALLS", "incoming", options, "callers");
   }
 
   async getCallees(symbol: string, options: QueryLimitOptions): Promise<QueryResult> {
-    const graph = await this.loadGraph();
-    const seeds = resolveSeedNodes(symbol, graph.nodes);
-    const results = graph.edges
-      .filter((edge) => edge.kind === "CALLS" && seeds.some((seed) => seed.id === edge.fromId))
-      .map((edge) => graph.nodeById.get(edge.toId))
-      .filter((node): node is CodeNode => Boolean(node))
-      .slice(0, options.limit)
-      .map((node) => nodeToResult(node, ["graph_calls"]));
-
-    return { schemaVersion, query: symbol, results };
+    return this.relatedTo(symbol, "CALLS", "outgoing", options, "callees");
   }
 
   async getReferences(symbol: string, options: QueryLimitOptions): Promise<QueryResult> {
-    return this.relatedTo(symbol, "REFERENCES", options, "references");
+    return this.relatedTo(symbol, "REFERENCES", "incoming", options, "references");
   }
 
   async expandContext(nodeId: string, options: QueryLimitOptions & { depth: number }): Promise<QueryResult> {
-    const graph = await this.loadGraph();
     const seen = new Set<string>([nodeId]);
-    const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
+    let frontier = [nodeId];
     const results: QueryResultItem[] = [];
 
-    while (queue.length > 0 && results.length < options.limit) {
-      const current = queue.shift();
-      if (!current || current.depth >= options.depth) continue;
-      for (const edge of graph.edges.filter((candidate) => candidate.fromId === current.id || candidate.toId === current.id)) {
-        const neighborId = edge.fromId === current.id ? edge.toId : edge.fromId;
-        if (seen.has(neighborId)) continue;
-        seen.add(neighborId);
-        const node = graph.nodeById.get(neighborId);
-        if (!node) continue;
-        results.push(nodeToResult(node, [`graph_${edge.kind.toLowerCase()}`]));
-        queue.push({ id: neighborId, depth: current.depth + 1 });
-        if (results.length >= options.limit) break;
+    for (let depth = 0; depth < options.depth && frontier.length > 0 && results.length < options.limit; depth += 1) {
+      const rows = await this.store.getAdjacentNodes(frontier, options.limit - results.length);
+      const nextFrontier: string[] = [];
+      for (const row of rows) {
+        if (seen.has(row.node.id)) {
+          continue;
+        }
+        seen.add(row.node.id);
+        nextFrontier.push(row.node.id);
+        results.push(nodeToResult(row.node, [`graph_${row.edgeKind.toLowerCase()}`]));
+        if (results.length >= options.limit) {
+          break;
+        }
       }
+      frontier = nextFrontier;
     }
 
-    return { schemaVersion, query: nodeId, results };
+    return parseQueryResult({ schemaVersion, query: nodeId, results });
   }
 
   async getContext(nodeId: string, options: QueryLimitOptions): Promise<QueryResult> {
-    const graph = await this.loadGraph();
-    const seeds = resolveSeedNodes(nodeId, graph.nodes).slice(0, options.limit);
-    return {
+    const nodes = await this.store.getContextNodes(nodeId, options.limit);
+    return parseQueryResult({
       schemaVersion,
       query: nodeId,
-      results: seeds.map((node) =>
+      results: nodes.map((node) =>
         nodeToResult(node, ["source_context"], {
-          excerpt: typeof node.metadata.content === "string" ? node.metadata.content : undefined,
+          excerpt: node.content ? truncateSource(node.content) : undefined,
         }),
       ),
-    };
+    });
   }
 
-  async semanticSearch(query: string, options: QueryLimitOptions): Promise<QueryResult> {
-    const graph = await this.loadGraph();
-    const vectorRows = await this.store.vectorSearch(embedText(query), options.limit);
-    return {
+  async semanticSearch(query: string, options: SemanticQueryOptions): Promise<QueryResult> {
+    const provider = await this.embeddingProvider;
+    const rows = await this.store.semanticSearch(await provider.embed(query), options.limit, {
+      repo: options.repo,
+      packageName: options.packageName,
+      fileKind: options.fileKind,
+      symbolKind: options.symbolKind,
+    });
+    return parseQueryResult({
       schemaVersion,
       query,
-      results: vectorRows
-        .map((row) => {
-          const node = graph.nodeById.get(row.id);
-          if (!node) return undefined;
-          return nodeToResult(node, ["vector_similarity"], {
-            score: Math.max(0, 1 - row.distance),
-          });
-        })
-        .filter((result): result is QueryResultItem => Boolean(result)),
-    };
+      results: rows.map((row) =>
+        nodeToResult(row.node, ["vector_similarity"], {
+          score: Math.max(0, 1 - row.distance),
+        }),
+      ),
+    });
   }
 
   async tracePath(fromId: string, toId: string, options: QueryLimitOptions): Promise<QueryResult> {
-    const graph = await this.loadGraph();
-    const path = breadthFirstPath(fromId, toId, graph.edges).slice(0, options.limit);
-    return {
+    const path = await this.store.tracePath(fromId, toId, options.limit);
+    return parseQueryResult({
       schemaVersion,
       query: `${fromId} -> ${toId}`,
-      results: path
-        .map((id) => graph.nodeById.get(id))
-        .filter((node): node is CodeNode => Boolean(node))
-        .map((node) => nodeToResult(node, ["graph_path"])),
-    };
+      results: path.map((node) => nodeToResult(node, ["graph_path"])),
+    });
   }
 
   private async relatedTo(
     symbol: string,
     edgeKind: CodeEdge["kind"],
+    direction: "incoming" | "outgoing",
     options: QueryLimitOptions,
     signal: string,
   ): Promise<QueryResult> {
-    const graph = await this.loadGraph();
-    const seeds = resolveSeedNodes(symbol, graph.nodes);
-    const seedIds = new Set(seeds.map((seed) => seed.id));
-    const results = graph.edges
-      .filter((edge) => edge.kind === edgeKind && seedIds.has(edge.toId))
-      .map((edge) => graph.nodeById.get(edge.fromId))
-      .filter((node): node is CodeNode => Boolean(node))
-      .slice(0, options.limit)
-      .map((node) => nodeToResult(node, [`graph_${signal}`]));
-    return { schemaVersion, query: symbol, results };
-  }
-
-  private async loadGraph(): Promise<{
-    nodes: CodeNode[];
-    edges: CodeEdge[];
-    nodeById: Map<string, CodeNode>;
-  }> {
-    const nodes = await this.store.getNodes();
-    const edges = await this.store.getEdges();
-    return {
-      nodes,
-      edges,
-      nodeById: new Map(nodes.map((node) => [node.id, node])),
-    };
+    const rows = await this.store.getRelatedNodes(symbol, edgeKind, direction, options.limit);
+    return parseQueryResult({
+      schemaVersion,
+      query: symbol,
+      results: rows.map((row) => nodeToResult(row.node, [`graph_${signal}`])),
+    });
   }
 }
 
-function resolveSeedNodes(seed: string, nodes: CodeNode[]): CodeNode[] {
-  const lowered = seed.toLowerCase();
-  return nodes.filter(
-    (node) =>
-      node.id === seed ||
-      (isSymbolLike(node) && node.name?.toLowerCase() === lowered) ||
-      (isSymbolLike(node) && node.name?.toLowerCase().includes(lowered)),
-  );
+function parseQueryResult(result: QueryResult): QueryResult {
+  return QueryResultSchema.parse(result);
 }
 
 function nodeToResult(
-  node: CodeNode,
+  node: StoredCodeNode,
   matchedSignals: string[],
   overrides: Partial<QueryResultItem> = {},
 ): QueryResultItem {
@@ -189,37 +175,93 @@ function nodeToResult(
         }
       : undefined,
     matchedSignals,
-    metadata: node.metadata,
+    metadata: sanitizeMetadata(node),
     ...overrides,
   };
 }
 
-function isSymbolLike(node: CodeNode): boolean {
-  return ["Function", "Class", "Interface", "TypeAlias", "Symbol", "Test"].includes(node.kind);
+function sanitizeMetadata(node: CodeNode): Record<string, unknown> {
+  const { content: _content, ...metadata } = node.metadata as Record<string, unknown>;
+  return metadata;
 }
 
-function symbolRank(node: CodeNode, needle: string): number {
-  const name = node.name?.toLowerCase() ?? "";
-  if (name === needle) return 0;
-  if (node.kind === "Function" && name.includes(needle)) return 1;
-  if (name.startsWith(needle)) return 2;
-  return 3;
+function truncateSource(content: string): string {
+  return truncateUtf8Bytes(content, 16_000);
 }
 
-function breadthFirstPath(fromId: string, toId: string, edges: CodeEdge[]): string[] {
-  const queue: string[][] = [[fromId]];
-  const seen = new Set([fromId]);
-  while (queue.length > 0) {
-    const path = queue.shift();
-    if (!path) continue;
-    const current = path.at(-1);
-    if (current === toId) return path;
-    for (const edge of edges.filter((candidate) => candidate.fromId === current || candidate.toId === current)) {
-      const next = edge.fromId === current ? edge.toId : edge.fromId;
-      if (seen.has(next)) continue;
-      seen.add(next);
-      queue.push([...path, next]);
+async function resolveEmbeddingProviderForIndex(
+  options: QueryEngineOptions,
+): Promise<EmbeddingProvider> {
+  const manifest = await readIndexManifest(options.indexPath);
+  const requestedProvider = options.embeddingProviderName
+    ? normalizeProviderForCompare(options.embeddingProviderName)
+    : undefined;
+  const indexedEmbedding = manifest?.embedding;
+
+  if (indexedEmbedding) {
+    if (requestedProvider && requestedProvider !== indexedEmbedding.provider) {
+      throw new Error(
+        `Embedding provider mismatch: index uses ${indexedEmbedding.provider}, query requested ${requestedProvider}`,
+      );
     }
+    if (options.embeddingModel && options.embeddingModel !== indexedEmbedding.model) {
+      throw new Error(
+        `Embedding model mismatch: index uses ${indexedEmbedding.model}, query requested ${options.embeddingModel}`,
+      );
+    }
+    if (options.embeddingProvider) {
+      validateProviderAgainstIndex(options.embeddingProvider, indexedEmbedding);
+      return options.embeddingProvider;
+    }
+    return createEmbeddingProvider({
+      provider: indexedEmbedding.provider,
+      model: indexedEmbedding.model,
+      indexPath: options.indexPath,
+    });
   }
-  return [];
+
+  if (options.embeddingProvider) {
+    return options.embeddingProvider;
+  }
+
+  return createEmbeddingProvider({
+    provider: options.embeddingProviderName,
+    model: options.embeddingModel,
+    indexPath: options.indexPath,
+  });
+}
+
+async function readIndexManifest(indexPath: string) {
+  try {
+    return IndexManifestSchema.parse(
+      JSON.parse(await readFile(join(indexPath, "manifest.json"), "utf8")),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function validateProviderAgainstIndex(
+  provider: EmbeddingProvider,
+  indexedEmbedding: { provider: string; model: string; dimension: number },
+): void {
+  if (
+    provider.provider !== indexedEmbedding.provider ||
+    provider.model !== indexedEmbedding.model ||
+    provider.dimension !== indexedEmbedding.dimension
+  ) {
+    throw new Error(
+      `Embedding provider mismatch: index uses ${indexedEmbedding.provider}/${indexedEmbedding.model}/${indexedEmbedding.dimension}, query provider is ${provider.provider}/${provider.model}/${provider.dimension}`,
+    );
+  }
+}
+
+function normalizeProviderForCompare(provider: string): string {
+  if (provider === "local-hash-v1") {
+    return "hash";
+  }
+  if (provider === "jinaai/jina-embeddings-v2-base-code") {
+    return "jina";
+  }
+  return provider;
 }
