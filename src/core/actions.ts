@@ -1,5 +1,6 @@
 import type { CliActions } from "../cli/program.js";
 import { indexWorkspace } from "../indexer/indexer.js";
+import { runEvalSuite } from "../eval/evaluator.js";
 import { createQueryEngine } from "../query/query-engine.js";
 import { searchText } from "../search/exact.js";
 import { startMcpServer } from "../mcp/server.js";
@@ -88,7 +89,7 @@ export function createDefaultActions(): CliActions {
         limit: options.limit ?? 20,
       });
     },
-    eval: notImplemented,
+    eval: runEvalSuite,
     mcp: startMcpServer,
   };
 }

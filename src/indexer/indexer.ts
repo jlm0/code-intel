@@ -163,6 +163,7 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
             absolutePath: file.absolutePath,
             symbolId: symbolNode.id,
             embeddingModel,
+            content: chunk.content,
           },
         }) as CodeNode & { content: string; embedding: number[] };
         chunkNode.content = chunk.content;
