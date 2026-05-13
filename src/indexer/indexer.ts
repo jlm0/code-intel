@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -9,6 +10,8 @@ import {
   type CodeNode,
   type IndexManifest,
 } from "../schema/schemas.js";
+import { ingestScipIndex } from "../scip/ingest.js";
+import { runScipTypescript } from "../scip/runner.js";
 import { chunkSourceFile } from "../treesitter/chunker.js";
 import { embeddingModel, embedText } from "../vectors/embedding.js";
 import { discoverWorkspace, type DiscoveredFile } from "../workspace/discovery.js";
@@ -36,6 +39,7 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
     edges: new Map(),
     chunks: new Map(),
   };
+  const health: IndexManifest["health"] = [];
   const workspaceNode = addNode(graph, {
     id: createStableId({
       kind: "workspace",
@@ -201,6 +205,69 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
         }
       }
     }
+
+    const scipOutputPath = join(input.indexPath, "scip", `${repo.name}.scip`);
+    const scipRun = await runScipTypescript({
+      repoPath: repo.path,
+      outputPath: scipOutputPath,
+      inferTsconfig: true,
+    });
+    if (scipRun.ok) {
+      const facts = await ingestScipIndex(scipOutputPath);
+      const scipSymbolNodes = new Map<string, CodeNode>();
+      for (const definition of facts.definitions) {
+        const fileNode = fileNodes.get(definition.relativePath);
+        const symbolNode = addNode(graph, {
+          id: createStableId({
+            kind: "symbol",
+            workspace: workspace.workspaceName,
+            repo: repo.name,
+            commit: repo.commit,
+            relativePath: definition.relativePath,
+            suffix: `scip-${definition.name}-${hashShort(definition.symbol)}`,
+          }),
+          kind: "Symbol",
+          workspace: workspace.workspaceName,
+          repo: repo.name,
+          file: definition.relativePath,
+          name: definition.name,
+          range: definition.range,
+          metadata: {
+            source: "scip-typescript",
+            scipSymbol: definition.symbol,
+            documentation: definition.documentation,
+          },
+        });
+        scipSymbolNodes.set(definition.symbol, symbolNode);
+        if (fileNode) {
+          addEdge(graph, "DEFINES", fileNode.id, symbolNode.id, workspace.workspaceName, repo.name);
+        }
+      }
+      for (const reference of facts.references) {
+        const fileNode = fileNodes.get(reference.relativePath);
+        const symbolNode = scipSymbolNodes.get(reference.symbol);
+        if (fileNode && symbolNode) {
+          addEdge(graph, "REFERENCES", fileNode.id, symbolNode.id, workspace.workspaceName, repo.name);
+        }
+      }
+      health.push({
+        name: `scip:${repo.name}`,
+        status: "pass",
+        message: `SCIP indexed ${facts.definitions.length} definitions and ${facts.references.length} references`,
+        details: { outputPath: scipOutputPath },
+      });
+    } else {
+      health.push({
+        name: `scip:${repo.name}`,
+        status: "warn",
+        message: "SCIP indexing failed; Tree-sitter fallback graph was still written",
+        details: {
+          outputPath: scipOutputPath,
+          exitCode: scipRun.exitCode,
+          stderr: scipRun.stderr,
+        },
+      });
+    }
   }
 
   const store = new LadybugGraphStore(input.indexPath);
@@ -227,11 +294,15 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
       edges: graph.edges.size,
       chunks: graph.chunks.size,
     },
-    health: [],
+    health,
   };
   await writeFile(join(input.indexPath, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFile(join(input.indexPath, "workspace.json"), `${JSON.stringify(workspace, null, 2)}\n`);
   return manifest;
+}
+
+function hashShort(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 10);
 }
 
 function addFileNode(
