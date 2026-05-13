@@ -4,6 +4,7 @@ export const hashEmbeddingDimension = 64;
 export const hashEmbeddingModel = "local-hash-v1";
 export const jinaEmbeddingModel = "jinaai/jina-embeddings-v2-base-code";
 export const jinaEmbeddingDimension = 768;
+export const defaultEmbeddingProvider = "jina";
 
 export interface EmbeddingProvider {
   provider: "hash" | "jina";
@@ -107,7 +108,10 @@ class JinaEmbeddingProvider implements EmbeddingProvider {
 }
 
 function normalizeProviderName(value: string | undefined): "hash" | "jina" {
-  if (!value || value === "hash" || value === "local-hash-v1") {
+  if (!value) {
+    return defaultEmbeddingProvider;
+  }
+  if (value === "hash" || value === "local-hash-v1") {
     return "hash";
   }
   if (value === "jina" || value === jinaEmbeddingModel) {

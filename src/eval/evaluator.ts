@@ -7,9 +7,19 @@ import { indexWorkspace } from "../indexer/indexer.js";
 import { createQueryEngine } from "../query/query-engine.js";
 import { schemaVersion } from "../schema/schemas.js";
 
+export interface EvalOptions {
+  embeddingProvider?: string;
+  embeddingModel?: string;
+}
+
 export interface EvalReport {
   schemaVersion: typeof schemaVersion;
   status: "pass" | "fail";
+  embedding: {
+    provider: string;
+    model: string;
+    dimension: number;
+  };
   cases: EvalCaseResult[];
 }
 
@@ -20,14 +30,16 @@ export interface EvalCaseResult {
   actual: string;
 }
 
-export async function runEvalSuite(): Promise<EvalReport> {
+export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalReport> {
   const fixturePath = resolveFixturePath();
   const indexPath = await mkdtemp(join(tmpdir(), "code-intel-eval-"));
   try {
-    await indexWorkspace({
+    const manifest = await indexWorkspace({
       workspaceRoot: fixturePath,
       repoPaths: [fixturePath],
       indexPath,
+      embeddingProviderName: options.embeddingProvider,
+      embeddingModel: options.embeddingModel,
     });
     const engine = createQueryEngine({ indexPath });
     const cases: EvalCaseResult[] = [];
@@ -92,6 +104,7 @@ export async function runEvalSuite(): Promise<EvalReport> {
     return {
       schemaVersion,
       status: cases.every((testCase) => testCase.status === "pass") ? "pass" : "fail",
+      embedding: manifest.embedding,
       cases,
     };
   } finally {

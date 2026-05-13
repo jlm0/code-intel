@@ -13,13 +13,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist coverage",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "test:cli": "vitest run tests/cli",
-    "test:mcp": "vitest run tests/mcp",
-    "test:pty": "vitest run tests/pty",
-    "test:e2e": "vitest run tests/e2e",
+    "test:cli": "npm run build && vitest run tests/cli",
+    "test:mcp": "npm run build && vitest run tests/mcp",
+    "test:pty": "npm run build && vitest run tests/pty",
+    "test:e2e": "npm run build && vitest run tests/e2e",
     "eval": "node dist/cli/main.js eval"
   },
   "engines": {

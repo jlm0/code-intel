@@ -1,16 +1,11 @@
-import { execa } from "execa";
 import { spawn } from "node-pty";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const cliPath = new URL("../../dist/cli/main.js", import.meta.url).pathname;
 
 describe.skipIf(!canSpawnPty())("TTY CLI behavior", () => {
-  beforeAll(async () => {
-    await execa("npm", ["run", "build"]);
-  });
-
   it("renders human health output when stdout is a TTY", async () => {
-    const output = await runPty(["health"]);
+    const output = await runPty(["health", "--embedding-provider", "hash"]);
 
     expect(output).toContain("status:");
     expect(output).toContain("node:");

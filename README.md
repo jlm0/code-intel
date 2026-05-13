@@ -16,10 +16,10 @@ node dist/cli/main.js mcp --workspace /path/to/workspace --index-path /path/to/.
 
 If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated, build, log, dependency, and local-dev runtime folders are ignored by default; pass `--include-ignored` only when those paths should be indexed or searched.
 
-The default embedding provider is `hash`, which is deterministic and fast for tests. Use `--embedding-provider jina` to run local Transformers.js embeddings with `jinaai/jina-embeddings-v2-base-code`:
+The default embedding provider is local Jina through Transformers.js with `jinaai/jina-embeddings-v2-base-code`. Use `--embedding-provider hash` only when you need the deterministic fast fallback for tests, offline diagnostics, or comparison runs:
 
 ```bash
-node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --embedding-provider jina --json
+node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --embedding-provider hash --json
 ```
 
 No hosted embedding API is used. The Jina model is downloaded into the configured index model cache on first use unless already cached.

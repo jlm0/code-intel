@@ -2,21 +2,22 @@ import { execa } from "execa";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const cliPath = new URL("../../dist/cli/main.js", import.meta.url).pathname;
 const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
 
 describe("fixture eval", () => {
-  beforeAll(async () => {
-    await execa("npm", ["run", "build"]);
-  });
-
-  it("passes the built-in fixture evaluation suite", async () => {
+  it("passes the built-in fixture evaluation suite with the default Jina provider", async () => {
     const result = await execa("node", [cliPath, "eval", "--json"]);
     const payload = JSON.parse(result.stdout);
 
     expect(payload.status).toBe("pass");
+    expect(payload.embedding).toMatchObject({
+      provider: "jina",
+      model: "jinaai/jina-embeddings-v2-base-code",
+      dimension: 768,
+    });
     expect(payload.cases.map((testCase: { name: string }) => testCase.name)).toEqual(
       expect.arrayContaining([
         "exported function",
@@ -25,7 +26,7 @@ describe("fixture eval", () => {
         "semantic concept",
       ]),
     );
-  });
+  }, 180_000);
 
   it("runs index, status, query, context, and persisted re-query through the built CLI", async () => {
     const indexPath = await mkdtemp(join(tmpdir(), "code-intel-e2e-"));
@@ -39,6 +40,8 @@ describe("fixture eval", () => {
         fixturePath,
         "--index-path",
         indexPath,
+        "--embedding-provider",
+        "hash",
         "--json",
       ]);
       expect(JSON.parse(indexResult.stdout).stats.chunks).toBeGreaterThan(0);

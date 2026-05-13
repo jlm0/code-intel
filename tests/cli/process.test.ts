@@ -3,15 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { execa } from "execa";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const cliPath = new URL("../../dist/cli/main.js", import.meta.url).pathname;
 
 describe("code-intel process behavior", () => {
-  beforeAll(async () => {
-    await execa("npm", ["run", "build"]);
-  });
-
   it("prints help to stdout", async () => {
     const result = await execa("node", [cliPath, "--help"]);
 
@@ -21,7 +17,7 @@ describe("code-intel process behavior", () => {
   });
 
   it("returns JSON health checks", async () => {
-    const result = await execa("node", [cliPath, "health", "--json"]);
+    const result = await execa("node", [cliPath, "health", "--embedding-provider", "hash", "--json"]);
     const payload = JSON.parse(result.stdout);
 
     expect(result.exitCode).toBe(0);
@@ -63,6 +59,8 @@ describe("code-intel process behavior", () => {
         fixturePath,
         "--index-path",
         indexPath,
+        "--embedding-provider",
+        "hash",
         "--json",
       ]);
       const indexPayload = JSON.parse(indexResult.stdout);
@@ -123,6 +121,8 @@ describe("code-intel process behavior", () => {
         fixturePath,
         "--index-path",
         indexPath,
+        "--embedding-provider",
+        "hash",
         "--json",
       ]);
 

@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { Connection, Database } from "@ladybugdb/core";
 
 import { LadybugGraphStore } from "../graph/ladybug-store.js";
-import { HealthCheckSchema, schemaVersion, type HealthCheck } from "../schema/schemas.js";
+import { HealthCheckSchema, IndexManifestSchema, schemaVersion, type HealthCheck } from "../schema/schemas.js";
 import { createEmbeddingProvider } from "../vectors/embedding.js";
 import { createRuntimeContext, type RuntimeOptions } from "./context.js";
 
@@ -23,6 +23,7 @@ export async function runHealth(options: RuntimeOptions): Promise<unknown> {
     checkLadybugVector(),
     checkTransformersModelCache(context.indexPath),
     checkEmbeddingProvider(context),
+    checkIndexEmbeddingProvider(context.indexPath),
     checkIndexIntegrity(context.indexPath),
     checkMcpSdk(),
   ]);
@@ -76,6 +77,51 @@ async function checkIndexIntegrity(indexPath: string): Promise<HealthCheck> {
     };
   } finally {
     await store.close();
+  }
+}
+
+function checkIndexEmbeddingProvider(indexPath: string): HealthCheck {
+  const manifestPath = join(indexPath, "manifest.json");
+  if (!existsSync(manifestPath)) {
+    return {
+      name: "index-embedding-provider",
+      status: "warn",
+      message: "No index manifest exists yet",
+      details: { manifestPath },
+    };
+  }
+
+  try {
+    const manifest = IndexManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
+    if (manifest.embedding.provider === "jina") {
+      return {
+        name: "index-embedding-provider",
+        status: "pass",
+        message: "Existing index uses Jina embeddings",
+        details: manifest.embedding,
+      };
+    }
+    if (manifest.embedding.provider === "hash") {
+      return {
+        name: "index-embedding-provider",
+        status: "warn",
+        message: "Existing index uses deterministic hash embeddings; rebuild without --embedding-provider hash to create Jina embeddings",
+        details: manifest.embedding,
+      };
+    }
+    return {
+      name: "index-embedding-provider",
+      status: "warn",
+      message: `Existing index uses unrecognized embedding provider ${manifest.embedding.provider}`,
+      details: manifest.embedding,
+    };
+  } catch (error) {
+    return {
+      name: "index-embedding-provider",
+      status: "fail",
+      message: "Existing index embedding metadata could not be read",
+      details: { error: error instanceof Error ? error.message : String(error), manifestPath },
+    };
   }
 }
 

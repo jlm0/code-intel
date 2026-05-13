@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { runHealth } from "../../src/core/health.js";
 import { indexWorkspace } from "../../src/indexer/indexer.js";
 import { createQueryEngine } from "../../src/query/query-engine.js";
 
@@ -17,11 +18,22 @@ describe("index and query integration", () => {
         workspaceRoot: fixturePath,
         repoPaths: [fixturePath],
         indexPath,
+        embeddingProviderName: "hash",
       });
 
       expect(manifest.stats.nodes).toBeGreaterThan(0);
       expect(manifest.stats.edges).toBeGreaterThan(0);
       expect(manifest.stats.chunks).toBeGreaterThan(0);
+      expect(manifest.embedding.provider).toBe("hash");
+
+      const health = await runHealth({ indexPath, embeddingProvider: "hash" });
+      expect((health as { checks: Array<{ name: string; status: string; message: string }> }).checks).toContainEqual(
+        expect.objectContaining({
+          name: "index-embedding-provider",
+          status: "warn",
+          message: expect.stringContaining("hash embeddings"),
+        }),
+      );
 
       const firstEngine = createQueryEngine({ indexPath });
       try {

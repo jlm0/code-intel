@@ -5,16 +5,12 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execa } from "execa";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const cliPath = new URL("../../dist/cli/main.js", import.meta.url).pathname;
 const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
 
 describe("MCP stdio server", () => {
-  beforeAll(async () => {
-    await execa("npm", ["run", "build"]);
-  });
-
   it("lists and calls code intelligence tools without stdout pollution", async () => {
     const indexPath = await mkdtemp(join(tmpdir(), "code-intel-mcp-"));
     await execa("node", [
@@ -26,6 +22,8 @@ describe("MCP stdio server", () => {
       fixturePath,
       "--index-path",
       indexPath,
+      "--embedding-provider",
+      "hash",
       "--json",
     ]);
 
@@ -38,6 +36,8 @@ describe("MCP stdio server", () => {
         fixturePath,
         "--index-path",
         indexPath,
+        "--embedding-provider",
+        "hash",
       ],
       cwd: new URL("../..", import.meta.url).pathname,
       stderr: "pipe",
