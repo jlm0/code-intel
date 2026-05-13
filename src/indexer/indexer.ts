@@ -243,6 +243,16 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
         if (fileNode) {
           addEdge(graph, "DEFINES", fileNode.id, symbolNode.id, workspace.workspaceName, repo.name);
         }
+        if (definition.range) {
+          for (const chunk of graph.chunks.values()) {
+            if (chunk.repo !== repo.name || chunk.file !== definition.relativePath || !chunk.range) {
+              continue;
+            }
+            if (rangesOverlap(chunk.range, definition.range)) {
+              addEdge(graph, "MENTIONS", chunk.id, symbolNode.id, workspace.workspaceName, repo.name);
+            }
+          }
+        }
       }
       for (const reference of facts.references) {
         const fileNode = fileNodes.get(reference.relativePath);
@@ -304,6 +314,13 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
 
 function hashShort(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 10);
+}
+
+function rangesOverlap(
+  left: { startLine: number; endLine: number },
+  right: { startLine: number; endLine: number },
+): boolean {
+  return left.startLine <= right.endLine && right.startLine <= left.endLine;
 }
 
 function addFileNode(

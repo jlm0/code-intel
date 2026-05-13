@@ -27,6 +27,7 @@ export class LadybugGraphStore {
   }
 
   async rebuild(input: GraphWriteInput): Promise<void> {
+    assertNoDanglingEdges(input);
     await rm(this.databasePath, { recursive: true, force: true });
     await mkdir(this.indexPath, { recursive: true });
     await this.open();
@@ -209,6 +210,18 @@ export class LadybugGraphStore {
     const result = await this.query(statement);
     const singleResult = Array.isArray(result) ? result[0] : result;
     return singleResult.getAll() as Promise<Record<string, unknown>[]>;
+  }
+}
+
+function assertNoDanglingEdges(input: GraphWriteInput): void {
+  const nodeIds = new Set(input.nodes.map((node) => node.id));
+  const danglingEdge = input.edges.find(
+    (edge) => !nodeIds.has(edge.fromId) || !nodeIds.has(edge.toId),
+  );
+  if (danglingEdge) {
+    throw new Error(
+      `Dangling edge ${danglingEdge.id} references ${danglingEdge.fromId} -> ${danglingEdge.toId}`,
+    );
   }
 }
 
