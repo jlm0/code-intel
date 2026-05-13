@@ -29,6 +29,7 @@ export class QueryEngine {
     const results = nodes
       .filter((node) => isSymbolLike(node))
       .filter((node) => node.name?.toLowerCase().includes(needle) || node.id === name)
+      .sort((left, right) => symbolRank(left, needle) - symbolRank(right, needle))
       .slice(0, options.limit)
       .map((node) => nodeToResult(node, ["symbol_name"]));
 
@@ -195,6 +196,14 @@ function nodeToResult(
 
 function isSymbolLike(node: CodeNode): boolean {
   return ["Function", "Class", "Interface", "TypeAlias", "Symbol", "Test"].includes(node.kind);
+}
+
+function symbolRank(node: CodeNode, needle: string): number {
+  const name = node.name?.toLowerCase() ?? "";
+  if (name === needle) return 0;
+  if (node.kind === "Function" && name.includes(needle)) return 1;
+  if (name.startsWith(needle)) return 2;
+  return 3;
 }
 
 function breadthFirstPath(fromId: string, toId: string, edges: CodeEdge[]): string[] {
