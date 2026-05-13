@@ -33,6 +33,7 @@ const chunkNodeTypes = new Set([
   "class_declaration",
   "interface_declaration",
   "type_alias_declaration",
+  "variable_declarator",
 ]);
 
 export function chunkSourceFile(input: ChunkSourceFileInput): SourceChunk[] {
@@ -47,6 +48,9 @@ export function chunkSourceFile(input: ChunkSourceFileInput): SourceChunk[] {
     }
     const name = node.childForFieldName("name")?.text;
     if (!name) {
+      return;
+    }
+    if (node.type === "variable_declarator" && !isChunkableVariable(node)) {
       return;
     }
     const content = sourceForNode(input.content, node);
@@ -131,6 +135,17 @@ function kindForNode(type: string, relativePath: string): SourceChunk["kind"] {
   if (type === "interface_declaration") return "Interface";
   if (type === "type_alias_declaration") return "TypeAlias";
   return "Function";
+}
+
+function isChunkableVariable(node: TreeSitterNode): boolean {
+  const valueType = node.childForFieldName("value")?.type;
+  const name = node.childForFieldName("name")?.text ?? "";
+  return (
+    valueType === "arrow_function" ||
+    valueType === "function" ||
+    name.startsWith("use") ||
+    /^[A-Z]/.test(name)
+  );
 }
 
 function languageForFile(relativePath: string): unknown {

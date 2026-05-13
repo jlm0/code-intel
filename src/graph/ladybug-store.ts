@@ -48,8 +48,7 @@ export class LadybugGraphStore {
       return;
     }
     await mkdir(this.indexPath, { recursive: true });
-    const database = new Database(this.databasePath);
-    this.connection = new Connection(database);
+    this.connection = await this.openWithRetry();
     await this.query("INSTALL vector; LOAD vector;");
   }
 
@@ -187,6 +186,23 @@ export class LadybugGraphStore {
       throw new Error("Ladybug connection is not open");
     }
     return this.connection.query(statement);
+  }
+
+  private async openWithRetry(): Promise<Connection> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const database = new Database(this.databasePath);
+        return new Connection(database);
+      } catch (error) {
+        lastError = error;
+        if (!String(error).includes("Could not set lock")) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private async rows(statement: string): Promise<Record<string, unknown>[]> {
