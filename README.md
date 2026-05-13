@@ -9,12 +9,15 @@ This package is intentionally standalone-shaped so it can be moved into a dedica
 ```bash
 npm run build
 node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --json
+node dist/cli/main.js update --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --json
 node dist/cli/main.js find-symbol SomeSymbol --workspace /path/to/workspace --index-path /path/to/.code-intel/index --json
 node dist/cli/main.js semantic "wallet signer" --index-path /path/to/.code-intel/index --filter-repo react-sdk --filter-package @getpara/react-sdk --json
 node dist/cli/main.js mcp --workspace /path/to/workspace --index-path /path/to/.code-intel/index
 ```
 
 If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated, build, log, dependency, and local-dev runtime folders are ignored by default; pass `--include-ignored` only when those paths should be indexed or searched.
+
+`update` performs changed-file incremental reindexing. It fingerprints current files by bytes, reuses unchanged file chunk facts and cached embeddings, recomputes relationships into a fresh Ladybug generation, then atomically publishes that generation. Deleted files disappear because they do not contribute facts to the new generation.
 
 The default embedding provider is local Jina through Transformers.js with `jinaai/jina-embeddings-v2-base-code`. Use `--embedding-provider hash` only when you need the deterministic fast fallback for tests, offline diagnostics, or comparison runs:
 

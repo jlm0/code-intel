@@ -2,7 +2,7 @@ import { createRuntimeContext } from "../core/context.js";
 import { runHealth } from "../core/health.js";
 import { getStatus } from "../core/status.js";
 import { runEvalSuite } from "../eval/evaluator.js";
-import { indexWorkspace } from "../indexer/indexer.js";
+import { indexWorkspace, updateWorkspace } from "../indexer/indexer.js";
 import { startMcpServer } from "../mcp/server.js";
 import { createQueryEngine, type QueryEngine } from "../query/query-engine.js";
 import { searchText } from "../search/exact.js";
@@ -24,7 +24,7 @@ export function createDefaultActions(): CliActions {
     },
     update: async (options) => {
       const context = createRuntimeContext(options);
-      return indexWorkspace({
+      return updateWorkspace({
         workspaceRoot: context.workspace,
         repoPaths: context.repos,
         indexPath: context.indexPath,

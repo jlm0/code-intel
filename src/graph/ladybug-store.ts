@@ -56,7 +56,10 @@ export class LadybugGraphStore implements CodeGraphRepository {
   private connection?: Connection;
   private hasLock = false;
 
-  constructor(private readonly indexPath: string) {}
+  constructor(
+    private readonly indexPath: string,
+    private readonly options: { databasePath?: string | Promise<string> } = {},
+  ) {}
 
   async rebuild(input: GraphWriteInput): Promise<GraphGeneration> {
     assertNoDanglingEdges(input);
@@ -94,7 +97,7 @@ export class LadybugGraphStore implements CodeGraphRepository {
       return;
     }
     await mkdir(this.indexPath, { recursive: true });
-    this.databasePath ??= await this.resolveActiveDatabasePath();
+    this.databasePath ??= await this.resolveDatabasePath();
     await this.acquireProcessLock();
     try {
       this.connection = await this.openWithRetry();
@@ -474,6 +477,12 @@ export class LadybugGraphStore implements CodeGraphRepository {
       return join(this.indexPath, legacyDatabaseName);
     }
     return join(this.indexPath, legacyDatabaseName);
+  }
+
+  private async resolveDatabasePath(): Promise<string> {
+    return this.options.databasePath
+      ? await this.options.databasePath
+      : this.resolveActiveDatabasePath();
   }
 
   private async acquireProcessLock(): Promise<void> {

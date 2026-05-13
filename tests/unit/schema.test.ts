@@ -47,6 +47,11 @@ describe("schema contracts", () => {
         repos: [],
         stats: { nodes: 0, edges: 0, chunks: 0 },
         embedding: { provider: "hash", model: "local-hash-v1", dimension: 64 },
+        incremental: {
+          mode: "incremental",
+          files: { added: 1, changed: 1, deleted: 1, unchanged: 2 },
+          chunks: { reused: 5, embedded: 2 },
+        },
         health: [],
       }),
     ).toMatchObject({ schemaVersion });

@@ -1,23 +1,32 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { writeJsonAtomically } from "../core/index-artifacts.js";
 import { createEdgeId, createStableId } from "../core/ids.js";
 import { LadybugGraphStore } from "../graph/ladybug-store.js";
 import {
   schemaVersion,
   type CodeEdge,
   type CodeNode,
+  type IncrementalStats,
   type IndexManifest,
 } from "../schema/schemas.js";
 import { ingestScipIndex } from "../scip/ingest.js";
 import { runScipTypescript } from "../scip/runner.js";
-import { chunkSourceFile } from "../treesitter/chunker.js";
 import {
   createEmbeddingProvider,
   type EmbeddingProvider,
 } from "../vectors/embedding.js";
 import { discoverWorkspace, type DiscoveredFile } from "../workspace/discovery.js";
+import { embedGraphChunks, type EmbeddableChunkNode } from "./chunk-embeddings.js";
+import {
+  readActiveIndexFacts,
+  writeIndexFacts,
+  type IndexFacts,
+} from "./fact-cache.js";
+import { prepareFileFacts } from "./file-facts.js";
+import { fingerprintKey, type IncrementalPlan } from "./update-planner.js";
 
 export interface IndexWorkspaceInput {
   workspaceRoot: string;
@@ -33,7 +42,14 @@ export interface IndexWorkspaceInput {
 interface MutableGraph {
   nodes: Map<string, CodeNode>;
   edges: Map<string, CodeEdge>;
-  chunks: Map<string, CodeNode & { content: string; embedding: number[] }>;
+  chunks: Map<string, GraphChunkNode>;
+}
+
+type GraphChunkNode = EmbeddableChunkNode;
+
+interface BuildIndexWorkspaceOptions {
+  mode: "index" | "update";
+  previousFacts?: IndexFacts;
 }
 
 const youngLockAgeMs = 30_000;
@@ -42,13 +58,29 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
   await mkdir(input.indexPath, { recursive: true });
   const releaseWriteLock = await acquireIndexWriteLock(input.indexPath);
   try {
-    return await buildIndexWorkspace(input);
+    return await buildIndexWorkspace(input, { mode: "index" });
   } finally {
     await releaseWriteLock();
   }
 }
 
-async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexManifest> {
+export async function updateWorkspace(input: IndexWorkspaceInput): Promise<IndexManifest> {
+  await mkdir(input.indexPath, { recursive: true });
+  const releaseWriteLock = await acquireIndexWriteLock(input.indexPath);
+  try {
+    return await buildIndexWorkspace(input, {
+      mode: "update",
+      previousFacts: await readActiveIndexFacts(input.indexPath),
+    });
+  } finally {
+    await releaseWriteLock();
+  }
+}
+
+async function buildIndexWorkspace(
+  input: IndexWorkspaceInput,
+  options: BuildIndexWorkspaceOptions,
+): Promise<IndexManifest> {
   const embeddingProvider =
     input.embeddingProvider ??
     (await createEmbeddingProvider({
@@ -59,6 +91,14 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
   const workspace = await discoverWorkspace({
     workspaceRoot: input.workspaceRoot,
     repoPaths: input.repoPaths,
+    includeIgnored: input.includeIgnored,
+    workspaceManifestPath: input.workspaceManifestPath,
+  });
+  const fileFactPlan = await prepareFileFacts({
+    workspace,
+    previousFacts: options.previousFacts,
+    embeddingProvider,
+    mode: options.mode,
     includeIgnored: input.includeIgnored,
     workspaceManifestPath: input.workspaceManifestPath,
   });
@@ -81,7 +121,7 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
     workspace: workspace.workspaceName,
     repo: "workspace",
     name: workspace.workspaceName,
-    metadata: { workspaceRoot: workspace.workspaceRoot },
+    metadata: { workspaceRoot: workspace.workspaceRoot, origin: "workspace-discovery" },
   });
 
   for (const repo of workspace.repos) {
@@ -98,9 +138,17 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
       workspace: workspace.workspaceName,
       repo: repo.name,
       name: repo.name,
-      metadata: { path: repo.path, packageManager: repo.packageManager },
+      metadata: {
+        path: repo.path,
+        packageManager: repo.packageManager,
+        ownerRepo: repo.name,
+        origin: "workspace-discovery",
+      },
     });
-    addEdge(graph, "CONTAINS", workspaceNode.id, repoNode.id, workspace.workspaceName, repo.name);
+    addEdge(graph, "CONTAINS", workspaceNode.id, repoNode.id, workspace.workspaceName, repo.name, {
+      ownerRepo: repo.name,
+      origin: "workspace-discovery",
+    });
 
     const packageNodes = new Map<string, CodeNode>();
     for (const pkg of repo.packages) {
@@ -122,10 +170,15 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
           path: pkg.path,
           exports: pkg.exports,
           dependencies: pkg.dependencies,
+          ownerRepo: repo.name,
+          origin: "workspace-discovery",
         },
       });
       packageNodes.set(pkg.name, packageNode);
-      addEdge(graph, "CONTAINS", repoNode.id, packageNode.id, workspace.workspaceName, repo.name);
+      addEdge(graph, "CONTAINS", repoNode.id, packageNode.id, workspace.workspaceName, repo.name, {
+        ownerRepo: repo.name,
+        origin: "workspace-discovery",
+      });
     }
 
     for (const pkg of repo.packages) {
@@ -134,7 +187,10 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
       for (const dependencyName of Object.keys(pkg.dependencies)) {
         const targetPackage = packageNodes.get(dependencyName);
         if (targetPackage) {
-          addEdge(graph, "DEPENDS_ON", fromPackage.id, targetPackage.id, workspace.workspaceName, repo.name);
+          addEdge(graph, "DEPENDS_ON", fromPackage.id, targetPackage.id, workspace.workspaceName, repo.name, {
+            ownerRepo: repo.name,
+            origin: "package-json",
+          });
         }
       }
     }
@@ -146,8 +202,11 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
     for (const file of repo.files) {
       const fileNode = addFileNode(graph, workspace.workspaceName, repo, file, packageNodes);
       fileNodes.set(file.relativePath, fileNode);
-      const content = await readFile(file.absolutePath, "utf8");
-      const chunks = chunkSourceFile({ relativePath: file.relativePath, content });
+      const fileFact = fileFactPlan.fileFactsByKey.get(fingerprintKey({ repo: repo.name, relativePath: file.relativePath }));
+      if (!fileFact) {
+        continue;
+      }
+      const chunks = fileFact.chunks;
       for (const chunk of chunks) {
         const symbolNode = addNode(graph, {
           id: createStableId({
@@ -171,6 +230,10 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
             absolutePath: file.absolutePath,
             fileKind: fileKindForPath(file.relativePath),
             symbolKind: chunk.kind,
+            ownerRepo: repo.name,
+            ownerFile: file.relativePath,
+            origin: "tree-sitter",
+            derivedFrom: chunk.contentHash,
           },
         });
         const chunkNode = addNode(graph, {
@@ -198,14 +261,22 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
             symbolId: symbolNode.id,
             embeddingModel: embeddingProvider.model,
             embeddingProvider: embeddingProvider.provider,
+            embeddingInputHash: chunk.embeddingInputHash,
+            ownerRepo: repo.name,
+            ownerFile: file.relativePath,
+            origin: "tree-sitter",
+            derivedFrom: chunk.contentHash,
           },
-        }) as CodeNode & { content: string; embedding: number[] };
+        }) as GraphChunkNode;
         chunkNode.content = chunk.content;
-        chunkNode.embedding = [];
+        chunkNode.embedding = chunk.embedding ?? [];
+        chunkNode.embeddingInputHash = chunk.embeddingInputHash;
+        chunkNode.fact = chunk;
         graph.chunks.set(chunkNode.id, chunkNode);
-        addEdge(graph, "DEFINES", fileNode.id, symbolNode.id, workspace.workspaceName, repo.name);
-        addEdge(graph, "HAS_CHUNK", fileNode.id, chunkNode.id, workspace.workspaceName, repo.name);
-        addEdge(graph, "MENTIONS", chunkNode.id, symbolNode.id, workspace.workspaceName, repo.name);
+        const ownerMetadata = ownerFileMetadata(repo.name, file.relativePath, "tree-sitter");
+        addEdge(graph, "DEFINES", fileNode.id, symbolNode.id, workspace.workspaceName, repo.name, ownerMetadata);
+        addEdge(graph, "HAS_CHUNK", fileNode.id, chunkNode.id, workspace.workspaceName, repo.name, ownerMetadata);
+        addEdge(graph, "MENTIONS", chunkNode.id, symbolNode.id, workspace.workspaceName, repo.name, ownerMetadata);
         if (!symbolNodesByName.has(chunk.name)) {
           symbolNodesByName.set(chunk.name, []);
         }
@@ -220,10 +291,11 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
       for (const chunk of chunks) {
         for (const callName of chunk.sourceCalls) {
           for (const target of symbolNodesByName.get(callName) ?? []) {
-            addEdge(graph, "CALLS", chunk.id, target.id, workspace.workspaceName, repo.name);
+            const ownerMetadata = ownerFileMetadata(repo.name, chunk.file ?? "", "tree-sitter-call");
+            addEdge(graph, "CALLS", chunk.id, target.id, workspace.workspaceName, repo.name, ownerMetadata);
             const sourceSymbolId = String(chunk.metadata.symbolId ?? "");
             if (sourceSymbolId && sourceSymbolId !== target.id) {
-              addEdge(graph, "CALLS", sourceSymbolId, target.id, workspace.workspaceName, repo.name);
+              addEdge(graph, "CALLS", sourceSymbolId, target.id, workspace.workspaceName, repo.name, ownerMetadata);
             }
           }
         }
@@ -273,17 +345,37 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
             documentation: definition.documentation,
             fileKind: fileKindForPath(definition.relativePath),
             symbolKind: "Symbol",
+            ownerRepo: repo.name,
+            ownerFile: definition.relativePath,
+            origin: "scip-typescript",
+            derivedFrom: definition.symbol,
           },
         });
         scipSymbolNodes.set(definition.symbol, symbolNode);
         if (fileNode) {
-          addEdge(graph, "DEFINES", fileNode.id, symbolNode.id, workspace.workspaceName, repo.name);
+          addEdge(
+            graph,
+            "DEFINES",
+            fileNode.id,
+            symbolNode.id,
+            workspace.workspaceName,
+            repo.name,
+            ownerFileMetadata(repo.name, definition.relativePath, "scip-typescript"),
+          );
         }
         if (definition.range) {
           for (const chunk of fileChunks.get(definition.relativePath) ?? []) {
             if (!chunk.range) continue;
             if (rangesOverlap(chunk.range, definition.range)) {
-              addEdge(graph, "MENTIONS", chunk.id, symbolNode.id, workspace.workspaceName, repo.name);
+              addEdge(
+                graph,
+                "MENTIONS",
+                chunk.id,
+                symbolNode.id,
+                workspace.workspaceName,
+                repo.name,
+                ownerFileMetadata(repo.name, definition.relativePath, "scip-typescript"),
+              );
             }
           }
         }
@@ -292,7 +384,15 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
         const fileNode = fileNodes.get(reference.relativePath);
         const symbolNode = scipSymbolNodes.get(reference.symbol);
         if (fileNode && symbolNode) {
-          addEdge(graph, "REFERENCES", fileNode.id, symbolNode.id, workspace.workspaceName, repo.name);
+          addEdge(
+            graph,
+            "REFERENCES",
+            fileNode.id,
+            symbolNode.id,
+            workspace.workspaceName,
+            repo.name,
+            ownerFileMetadata(repo.name, reference.relativePath, "scip-typescript"),
+          );
         }
         if (symbolNode) {
           const containingChunk = findContainingChunk(
@@ -300,9 +400,10 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
             reference.range,
           );
           if (containingChunk) {
-            addEdge(graph, "REFERENCES", containingChunk.id, symbolNode.id, workspace.workspaceName, repo.name);
+            const ownerMetadata = ownerFileMetadata(repo.name, reference.relativePath, "scip-typescript");
+            addEdge(graph, "REFERENCES", containingChunk.id, symbolNode.id, workspace.workspaceName, repo.name, ownerMetadata);
             if (containingChunk.kind === "Test") {
-              addEdge(graph, "TESTS", containingChunk.id, symbolNode.id, workspace.workspaceName, repo.name);
+              addEdge(graph, "TESTS", containingChunk.id, symbolNode.id, workspace.workspaceName, repo.name, ownerMetadata);
             }
           }
         }
@@ -327,11 +428,20 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
     }
   }
 
-  await embedGraphChunks(graph, embeddingProvider);
+  const embedStats = await embedGraphChunks(graph.chunks, embeddingProvider, fileFactPlan.embeddingCache);
+  const generatedAt = new Date().toISOString();
+  const incrementalStats = createIncrementalStats({
+    mode: options.mode,
+    plan: fileFactPlan.incrementalPlan,
+    embeddedChunks: embedStats.embedded,
+    reusedChunks: embedStats.reused,
+    previousFacts: options.previousFacts,
+    configHash: fileFactPlan.configHash,
+  });
   const manifest: IndexManifest = {
     schemaVersion,
     workspace: workspace.workspaceName,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     indexPath: input.indexPath,
     repos: workspace.repos.map((repo) => ({
       name: repo.name,
@@ -350,7 +460,18 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
       model: embeddingProvider.model,
       dimension: embeddingProvider.dimension,
     },
+    incremental: incrementalStats,
     health,
+  };
+  const facts: IndexFacts = {
+    schemaVersion,
+    workspace: workspace.workspaceName,
+    generatedAt,
+    configHash: fileFactPlan.configHash,
+    embedding: manifest.embedding,
+    files: [...fileFactPlan.fileFactsByKey.values()].sort((left, right) =>
+      fingerprintKey(left.fingerprint).localeCompare(fingerprintKey(right.fingerprint)),
+    ),
   };
   const store = new LadybugGraphStore(input.indexPath);
   const generation = await store.rebuild({
@@ -361,25 +482,43 @@ async function buildIndexWorkspace(input: IndexWorkspaceInput): Promise<IndexMan
   });
   await writeJsonAtomically(join(generation.generationPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(generation.generationPath, "workspace.json"), workspace);
+  await writeIndexFacts(generation.generationPath, facts);
   await store.publishGeneration(generation.generationId);
   await writeJsonAtomically(join(input.indexPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(input.indexPath, "workspace.json"), workspace);
   return manifest;
 }
 
-async function embedGraphChunks(
-  graph: MutableGraph,
-  embeddingProvider: EmbeddingProvider,
-): Promise<void> {
-  const chunks = [...graph.chunks.values()].sort((left, right) => left.id.localeCompare(right.id));
-  for (const batch of chunkArray(chunks, 16)) {
-    const embeddings = await embeddingProvider.embedBatch(
-      batch.map((chunk) => `${chunk.name}\n${chunk.content}`),
-    );
-    batch.forEach((chunk, index) => {
-      chunk.embedding = embeddings[index] ?? [];
-    });
+function createIncrementalStats(input: {
+  mode: "index" | "update";
+  plan: IncrementalPlan | undefined;
+  embeddedChunks: number;
+  reusedChunks: number;
+  previousFacts: IndexFacts | undefined;
+  configHash: string;
+}): IncrementalStats | undefined {
+  if (input.mode !== "update" || !input.plan) {
+    return undefined;
   }
+  const reason = !input.previousFacts
+    ? "missing previous facts"
+    : input.previousFacts.configHash !== input.configHash
+      ? "config changed"
+      : undefined;
+  return {
+    mode: input.plan.fullRebuild ? "full" : "incremental",
+    reason,
+    files: {
+      added: input.plan.added.length,
+      changed: input.plan.changed.length,
+      deleted: input.plan.deleted.length,
+      unchanged: input.plan.unchanged.length,
+    },
+    chunks: {
+      reused: input.reusedChunks,
+      embedded: input.embeddedChunks,
+    },
+  };
 }
 
 function hashShort(value: string): string {
@@ -426,6 +565,7 @@ function addFallbackReferenceEdges(
           symbol.id,
           workspaceName,
           repoName,
+          ownerFileMetadata(repoName, chunk.file ?? "", "tree-sitter-reference-fallback"),
         );
       }
     }
@@ -455,11 +595,25 @@ function addFileNode(
     file: file.relativePath,
     name: file.relativePath,
     language: file.language,
-    metadata: { absolutePath: file.absolutePath, fileKind: fileKindForPath(file.relativePath) },
+    metadata: {
+      absolutePath: file.absolutePath,
+      fileKind: fileKindForPath(file.relativePath),
+      ownerRepo: repo.name,
+      ownerFile: file.relativePath,
+      origin: "workspace-discovery",
+    },
   });
   const packageNode = file.packageName ? packageNodes.get(file.packageName) : undefined;
   if (packageNode) {
-    addEdge(graph, "CONTAINS", packageNode.id, fileNode.id, workspaceName, repo.name);
+    addEdge(
+      graph,
+      "CONTAINS",
+      packageNode.id,
+      fileNode.id,
+      workspaceName,
+      repo.name,
+      ownerFileMetadata(repo.name, file.relativePath, "workspace-discovery"),
+    );
   }
   return fileNode;
 }
@@ -477,6 +631,7 @@ function addEdge(
   toId: string,
   workspace: string,
   repo: string,
+  metadata: Record<string, unknown> = { ownerRepo: repo, origin: "graph-builder" },
 ): void {
   const edge: CodeEdge = {
     schemaVersion,
@@ -486,9 +641,17 @@ function addEdge(
     toId,
     workspace,
     repo,
-    metadata: {},
+    metadata,
   };
   graph.edges.set(edge.id, edge);
+}
+
+function ownerFileMetadata(repo: string, file: string, origin: string): Record<string, unknown> {
+  return {
+    ownerRepo: repo,
+    ...(file ? { ownerFile: file } : {}),
+    origin,
+  };
 }
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -503,12 +666,6 @@ function fileKindForPath(relativePath: string): string {
   return /(^|\/)(__tests__|tests?)\//.test(relativePath) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relativePath)
     ? "test"
     : "source";
-}
-
-async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
-  const tempPath = `${path}.${process.pid}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`);
-  await rename(tempPath, path);
 }
 
 async function acquireIndexWriteLock(indexPath: string): Promise<() => Promise<void>> {

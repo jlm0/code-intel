@@ -7,6 +7,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 
+import { copyFixtureWorkspace, mutateFixtureWorkspace } from "../helpers/incremental-fixture.js";
+
 const cliPath = new URL("../../dist/cli/main.js", import.meta.url).pathname;
 const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
 
@@ -176,7 +178,91 @@ describe("MCP stdio server", () => {
       await client.close();
       await rm(indexPath, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
+
+  it("serves the active generation after an incremental update", async () => {
+    const workspaceRoot = await copyFixtureWorkspace();
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-mcp-update-"));
+    await execa("node", [
+      cliPath,
+      "index",
+      "--workspace",
+      workspaceRoot,
+      "--repo",
+      workspaceRoot,
+      "--index-path",
+      indexPath,
+      "--embedding-provider",
+      "hash",
+      "--json",
+    ]);
+    await mutateFixtureWorkspace(workspaceRoot);
+    await execa("node", [
+      cliPath,
+      "update",
+      "--workspace",
+      workspaceRoot,
+      "--repo",
+      workspaceRoot,
+      "--index-path",
+      indexPath,
+      "--embedding-provider",
+      "hash",
+      "--json",
+    ]);
+
+    const transport = new StdioClientTransport({
+      command: "node",
+      args: [
+        cliPath,
+        "mcp",
+        "--workspace",
+        workspaceRoot,
+        "--index-path",
+        indexPath,
+        "--embedding-provider",
+        "hash",
+      ],
+      cwd: new URL("../..", import.meta.url).pathname,
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "code-intel-update-test", version: "0.1.0" });
+
+    try {
+      await client.connect(transport);
+      const symbol = await client.callTool({
+        name: "find_symbol",
+        arguments: { name: "createBlessingNote", limit: 5 },
+      });
+      expect(parseToolText(symbol).result.results[0].file).toBe("packages/core/src/blessing.ts");
+
+      const deletedSymbol = await client.callTool({
+        name: "find_symbol",
+        arguments: { name: "PrimaryRenderer", limit: 5 },
+      });
+      expect(parseToolText(deletedSymbol).result.results).toEqual([]);
+
+      const references = await client.callTool({
+        name: "get_references",
+        arguments: { symbol: "calculateGivingTotal", limit: 20 },
+      });
+      expect(parseToolText(references).result.results.map((item: { file?: string }) => item.file)).not.toContain(
+        "packages/core/src/tithe.test.ts",
+      );
+
+      const semantic = await client.callTool({
+        name: "semantic_search",
+        arguments: { query: "primary renderer", limit: 5, fileKind: "source" },
+      });
+      expect(parseToolText(semantic).result.results.map((item: { file?: string }) => item.file)).not.toContain(
+        "packages/core/src/duplicateMethods.ts",
+      );
+    } finally {
+      await client.close();
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 function parseToolText(result: { content: Array<{ type: string; text?: string }> }) {

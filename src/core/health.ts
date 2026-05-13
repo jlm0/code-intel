@@ -6,8 +6,9 @@ import { spawnSync } from "node:child_process";
 
 import { Connection, Database } from "@ladybugdb/core";
 
+import { readActiveManifest, resolveActiveManifestPath } from "./index-artifacts.js";
 import { LadybugGraphStore } from "../graph/ladybug-store.js";
-import { HealthCheckSchema, IndexManifestSchema, schemaVersion, type HealthCheck } from "../schema/schemas.js";
+import { HealthCheckSchema, schemaVersion, type HealthCheck } from "../schema/schemas.js";
 import { createEmbeddingProvider } from "../vectors/embedding.js";
 import { createRuntimeContext, type RuntimeOptions } from "./context.js";
 
@@ -43,7 +44,7 @@ export async function runHealth(options: RuntimeOptions): Promise<unknown> {
 }
 
 async function checkIndexIntegrity(indexPath: string): Promise<HealthCheck> {
-  const manifestPath = join(indexPath, "manifest.json");
+  const manifestPath = await resolveActiveManifestPath(indexPath);
   if (!existsSync(manifestPath)) {
     return {
       name: "index-integrity",
@@ -80,8 +81,8 @@ async function checkIndexIntegrity(indexPath: string): Promise<HealthCheck> {
   }
 }
 
-function checkIndexEmbeddingProvider(indexPath: string): HealthCheck {
-  const manifestPath = join(indexPath, "manifest.json");
+async function checkIndexEmbeddingProvider(indexPath: string): Promise<HealthCheck> {
+  const manifestPath = await resolveActiveManifestPath(indexPath);
   if (!existsSync(manifestPath)) {
     return {
       name: "index-embedding-provider",
@@ -92,7 +93,10 @@ function checkIndexEmbeddingProvider(indexPath: string): HealthCheck {
   }
 
   try {
-    const manifest = IndexManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
+    const manifest = await readActiveManifest(indexPath);
+    if (!manifest) {
+      throw new Error("Active index manifest could not be parsed");
+    }
     if (manifest.embedding.provider === "jina") {
       return {
         name: "index-embedding-provider",

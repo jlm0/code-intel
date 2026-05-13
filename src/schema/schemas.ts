@@ -84,6 +84,31 @@ export const HealthCheckSchema = z.object({
   details: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const FileFingerprintSchema = z.object({
+  repo: z.string().min(1),
+  relativePath: z.string().min(1),
+  packageName: z.string().optional(),
+  language: z.string().min(1),
+  size: z.number().int().min(0),
+  mtimeMs: z.number().min(0),
+  contentHash: z.string().min(1),
+});
+
+export const IncrementalStatsSchema = z.object({
+  mode: z.enum(["full", "incremental"]),
+  reason: z.string().optional(),
+  files: z.object({
+    added: z.number().int().min(0),
+    changed: z.number().int().min(0),
+    deleted: z.number().int().min(0),
+    unchanged: z.number().int().min(0),
+  }),
+  chunks: z.object({
+    reused: z.number().int().min(0),
+    embedded: z.number().int().min(0),
+  }),
+});
+
 export const IndexManifestSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   workspace: z.string().min(1),
@@ -108,6 +133,7 @@ export const IndexManifestSchema = z.object({
     model: z.string().min(1),
     dimension: z.number().int().min(1),
   }),
+  incremental: IncrementalStatsSchema.optional(),
   health: z.array(HealthCheckSchema),
 });
 
@@ -170,7 +196,9 @@ export const McpToolPayloadSchema = z.object({
 export type CodeNode = z.infer<typeof CodeNodeSchema>;
 export type CodeEdge = z.infer<typeof CodeEdgeSchema>;
 export type CodeChunk = z.infer<typeof ChunkSchema>;
+export type FileFingerprint = z.infer<typeof FileFingerprintSchema>;
 export type HealthCheck = z.infer<typeof HealthCheckSchema>;
+export type IncrementalStats = z.infer<typeof IncrementalStatsSchema>;
 export type IndexManifest = z.infer<typeof IndexManifestSchema>;
 export type QueryResult = z.infer<typeof QueryResultSchema>;
 export type QueryResultItem = z.infer<typeof QueryResultItemSchema>;

@@ -1,11 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
+import { resolveActiveIndexSnapshot, type ActiveIndexSnapshot } from "../core/index-artifacts.js";
 import { truncateUtf8Bytes } from "../core/text.js";
 import { LadybugGraphStore } from "../graph/ladybug-store.js";
 import type { CodeGraphRepository, SemanticSearchFilters, StoredCodeNode } from "../graph/repository.js";
 import {
-  IndexManifestSchema,
   QueryResultSchema,
   schemaVersion,
   type CodeEdge,
@@ -32,9 +29,12 @@ export interface QueryLimitOptions {
 export interface SemanticQueryOptions extends QueryLimitOptions, SemanticSearchFilters {}
 
 export function createQueryEngine(options: QueryEngineOptions): QueryEngine {
+  const snapshot = resolveActiveIndexSnapshot(options.indexPath);
   return new QueryEngine(
-    new LadybugGraphStore(options.indexPath),
-    resolveEmbeddingProviderForIndex(options),
+    new LadybugGraphStore(options.indexPath, {
+      databasePath: snapshot.then((activeIndex) => activeIndex.databasePath),
+    }),
+    resolveEmbeddingProviderForIndex(options, snapshot),
   );
 }
 
@@ -191,8 +191,9 @@ function truncateSource(content: string): string {
 
 async function resolveEmbeddingProviderForIndex(
   options: QueryEngineOptions,
+  snapshotPromise: Promise<ActiveIndexSnapshot>,
 ): Promise<EmbeddingProvider> {
-  const manifest = await readIndexManifest(options.indexPath);
+  const manifest = (await snapshotPromise).manifest;
   const requestedProvider = options.embeddingProviderName
     ? normalizeProviderForCompare(options.embeddingProviderName)
     : undefined;
@@ -229,16 +230,6 @@ async function resolveEmbeddingProviderForIndex(
     model: options.embeddingModel,
     indexPath: options.indexPath,
   });
-}
-
-async function readIndexManifest(indexPath: string) {
-  try {
-    return IndexManifestSchema.parse(
-      JSON.parse(await readFile(join(indexPath, "manifest.json"), "utf8")),
-    );
-  } catch {
-    return undefined;
-  }
 }
 
 function validateProviderAgainstIndex(
