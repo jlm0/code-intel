@@ -1,5 +1,6 @@
 import { Command } from "commander";
 
+import { createDefaultActions } from "../core/actions.js";
 import { renderResult } from "./presenter.js";
 
 export interface CliRuntime {
@@ -48,26 +49,8 @@ const notImplemented: CliAction = async () => ({
   status: "not_implemented",
 });
 
-const defaultActions: CliActions = {
-  index: notImplemented,
-  update: notImplemented,
-  status: notImplemented,
-  health: notImplemented,
-  search: notImplemented,
-  semantic: notImplemented,
-  findSymbol: notImplemented,
-  references: notImplemented,
-  callers: notImplemented,
-  callees: notImplemented,
-  expandContext: notImplemented,
-  getContext: notImplemented,
-  tracePath: notImplemented,
-  eval: notImplemented,
-  mcp: notImplemented,
-};
-
 export function createCliProgram(options: CreateCliProgramOptions = {}): Command {
-  const actions = { ...defaultActions, ...options.actions };
+  const actions = { ...createDefaultActions(), ...options.actions };
   const runtime: CliRuntime = {
     stdout: options.stdout ?? process.stdout,
     stderr: options.stderr ?? process.stderr,
@@ -78,8 +61,7 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
     .name("code-intel")
     .description("Local-first JS/TS code intelligence graph CLI")
     .version("0.1.0")
-    .showHelpAfterError()
-    .exitOverride();
+    .showHelpAfterError();
 
   registerCommand(program, "index", "Index one or more JS/TS repositories.", actions.index, runtime);
   registerCommand(program, "update", "Refresh an existing index.", actions.update, runtime);
