@@ -8,7 +8,8 @@
     "code-intel": "./dist/cli/main.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "eval-packs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

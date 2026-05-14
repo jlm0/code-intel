@@ -1,0 +1,121 @@
+[
+  {
+    "id": "rallly.create-poll-api-flow",
+    "name": "Create poll API flow",
+    "mode": "semantic",
+    "query": "create poll api route validates input calls createPoll mutation and writes database record",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 8
+      },
+      {
+        "file": "packages/api-core/src/polls/mutations.ts",
+        "symbol": "createPoll",
+        "maxRank": 12
+      },
+      {
+        "file": "packages/database/src/client.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "rallly.delete-poll-api-flow",
+    "name": "Delete poll API flow",
+    "mode": "semantic",
+    "query": "delete poll route removes or updates a poll through api core mutation",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 10
+      },
+      {
+        "file": "packages/api-core/src/polls/mutations.ts",
+        "symbol": "deletePoll",
+        "maxRank": 12
+      }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "rallly.api-key-auth-middleware",
+    "name": "API key auth middleware",
+    "mode": "semantic",
+    "query": "space api key authentication middleware protects api routes",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 12
+      },
+      {
+        "file": "packages/api-core/src/**",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "rallly.web-poll-page-flow",
+    "name": "Web poll page flow",
+    "mode": "semantic",
+    "query": "poll page loader renders admin page duplicate dialog and dashboard poll workflow",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page-loader.tsx",
+        "maxRank": 12
+      },
+      {
+        "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page.tsx",
+        "maxRank": 12
+      },
+      {
+        "file": "apps/web/src/app/[locale]/(space)/(dashboard)/polls/**",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "rallly.private-api-test-flow",
+    "name": "Private API test flow",
+    "mode": "semantic",
+    "query": "private api route tests exercise web app api handler",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "apps/web/src/app/api/private/[...route]/route.ts",
+        "maxRank": 10
+      },
+      {
+        "file": "apps/web/src/app/api/private/[...route]/route.test.ts",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "rallly.false-positive-guard",
+    "name": "Create poll flow should not rank unrelated billing first",
+    "mode": "semantic",
+    "query": "create poll api route validates input calls createPoll mutation and writes database record",
+    "limit": 10,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 8
+      }
+    ],
+    "notExpected": [
+      {
+        "file": "packages/billing/src/**"
+      }
+    ],
+    "failureClassHint": "ranking"
+  }
+]

@@ -15,6 +15,10 @@ export interface CliOptions extends RuntimeOptions {
   filterPackage?: string;
   fileKind?: string;
   symbolKind?: string;
+  suite?: string;
+  evalPack?: string;
+  evalCachePath?: string;
+  fetch?: boolean;
 }
 
 export type CliAction = (options: CliOptions, ...args: string[]) => Promise<unknown>;

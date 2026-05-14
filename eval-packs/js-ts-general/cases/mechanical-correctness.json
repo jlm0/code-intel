@@ -1,0 +1,140 @@
+[
+  {
+    "id": "synthetic.exported-function",
+    "name": "Exported function definition",
+    "mode": "find-symbol",
+    "query": "calculateGivingTotal",
+    "limit": 10,
+    "expected": [
+      {
+        "file": "packages/core/src/tithe.ts",
+        "symbol": "calculateGivingTotal",
+        "maxRank": 3
+      }
+    ],
+    "failureClassHint": "query"
+  },
+  {
+    "id": "synthetic.re-exported-symbol",
+    "name": "Re-exported symbol definition",
+    "mode": "find-symbol",
+    "query": "formatGivingReceipt",
+    "limit": 10,
+    "expected": [
+      {
+        "file": "packages/core/src/tithe.ts",
+        "symbol": "formatGivingReceipt",
+        "maxRank": 3
+      }
+    ],
+    "failureClassHint": "query"
+  },
+  {
+    "id": "synthetic.path-alias-reference",
+    "name": "Path alias import reference",
+    "mode": "references",
+    "query": "GivingLedger",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/ui/src/useGivingSummary.tsx",
+        "symbol": "useGivingSummary",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "synthetic.react-hook",
+    "name": "React hook symbol",
+    "mode": "find-symbol",
+    "query": "useGivingSummary",
+    "limit": 10,
+    "expected": [
+      {
+        "file": "packages/ui/src/useGivingSummary.tsx",
+        "symbol": "useGivingSummary",
+        "maxRank": 3
+      }
+    ],
+    "failureClassHint": "chunking"
+  },
+  {
+    "id": "synthetic.class-method",
+    "name": "Class method symbol",
+    "mode": "find-symbol",
+    "query": "summarize",
+    "limit": 10,
+    "expected": [
+      {
+        "file": "packages/core/src/ledger.ts",
+        "symbol": "summarize",
+        "maxRank": 3
+      }
+    ],
+    "failureClassHint": "chunking"
+  },
+  {
+    "id": "synthetic.caller-relationship",
+    "name": "Caller relationship",
+    "mode": "callers",
+    "query": "calculateGivingTotal",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/core/src/ledger.ts",
+        "symbol": "summarize",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "synthetic.test-relationship",
+    "name": "Test relationship",
+    "mode": "references",
+    "query": "calculateGivingTotal",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/core/src/tithe.test.ts",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "synthetic.semantic-concept",
+    "name": "Semantic concept where exact phrase is absent",
+    "mode": "semantic",
+    "query": "giving receipt summary",
+    "limit": 10,
+    "expected": [
+      {
+        "file": "packages/core/src/tithe.ts",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "embedding"
+  },
+  {
+    "id": "synthetic.false-positive-guard",
+    "name": "Duplicate method false-positive guard",
+    "mode": "callers",
+    "query": "calculateGivingTotal",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/core/src/ledger.ts",
+        "symbol": "summarize",
+        "maxRank": 10
+      }
+    ],
+    "notExpected": [
+      {
+        "file": "packages/core/src/duplicateMethods.ts"
+      }
+    ],
+    "failureClassHint": "graph"
+  }
+]

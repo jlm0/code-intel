@@ -13,20 +13,101 @@ describe("fixture eval", () => {
     const payload = JSON.parse(result.stdout);
 
     expect(payload.status).toBe("pass");
+    expect(payload.suite).toMatchObject({
+      id: "js-ts-general",
+      kind: "synthetic",
+    });
     expect(payload.embedding).toMatchObject({
       provider: "jina",
       model: "jinaai/jina-embeddings-v2-base-code",
       dimension: 768,
     });
-    expect(payload.cases.map((testCase: { name: string }) => testCase.name)).toEqual(
+    expect(payload.cases.map((testCase: { id: string }) => testCase.id)).toEqual(
       expect.arrayContaining([
-        "exported function",
-        "react hook",
-        "caller relationship",
-        "semantic concept",
+        "synthetic.exported-function",
+        "synthetic.react-hook",
+        "synthetic.caller-relationship",
+        "synthetic.semantic-concept",
       ]),
     );
   }, 180_000);
+
+  it("runs the synthetic eval pack by suite id with rank and false-positive evidence", async () => {
+    const result = await execa("node", [
+      cliPath,
+      "eval",
+      "--suite",
+      "js-ts-general",
+      "--embedding-provider",
+      "hash",
+      "--json",
+    ]);
+    const payload = JSON.parse(result.stdout);
+
+    expect(payload.status).toBe("pass");
+    expect(payload.suite).toMatchObject({
+      id: "js-ts-general",
+      name: "JS/TS General Synthetic Fixture",
+      kind: "synthetic",
+    });
+    expect(payload.corpus).toMatchObject({
+      type: "local",
+    });
+    expect(payload.cases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "synthetic.exported-function",
+          mode: "find-symbol",
+          query: "calculateGivingTotal",
+          status: "pass",
+          expected: expect.arrayContaining([
+            expect.objectContaining({
+              file: "packages/core/src/tithe.ts",
+              found: true,
+              rank: expect.any(Number),
+            }),
+          ]),
+          latencyMs: expect.any(Number),
+        }),
+        expect.objectContaining({
+          id: "synthetic.false-positive-guard",
+          status: "pass",
+          notExpected: expect.arrayContaining([
+            expect.objectContaining({
+              file: "packages/core/src/duplicateMethods.ts",
+              found: false,
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("requires fetch or a cached checkout for the Rallly on-demand eval pack", async () => {
+    const evalCachePath = await mkdtemp(join(tmpdir(), "code-intel-eval-cache-"));
+    try {
+      const result = await execa(
+        "node",
+        [
+          cliPath,
+          "eval",
+          "--suite",
+          "oss-rallly-app-flow",
+          "--eval-cache-path",
+          evalCachePath,
+          "--embedding-provider",
+          "hash",
+          "--json",
+        ],
+        { reject: false },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("requires --fetch");
+    } finally {
+      await rm(evalCachePath, { recursive: true, force: true });
+    }
+  });
 
   it("runs index, status, query, context, and persisted re-query through the built CLI", async () => {
     const indexPath = await mkdtemp(join(tmpdir(), "code-intel-e2e-"));

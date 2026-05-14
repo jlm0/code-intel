@@ -37,7 +37,9 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
   registerCommand(program, "expand-context <nodeId>", "Expand graph context around a node.", actions.expandContext, runtime);
   registerCommand(program, "get-context <nodeId>", "Return bounded source context for a node.", actions.getContext, runtime);
   registerCommand(program, "trace-path <fromId> <toId>", "Trace a graph path between two nodes.", actions.tracePath, runtime);
-  registerCommand(program, "eval", "Run fixture and proof-of-concept evaluations.", actions.eval, runtime);
+  registerCommand(program, "eval", "Run fixture and proof-of-concept evaluations.", actions.eval, runtime, {
+    addOptions: addEvalOptions,
+  });
   registerCommand(program, "mcp", "Start the MCP stdio server.", actions.mcp, runtime, { suppressOutput: true });
 
   return program;
@@ -49,10 +51,11 @@ function registerCommand(
   description: string,
   action: CliAction,
   runtime: CliRuntime,
-  config: { suppressOutput?: boolean } = {},
+  config: { suppressOutput?: boolean; addOptions?: (command: Command) => void } = {},
 ): void {
   const command = program.command(signature).description(description);
   addCommonOptions(command);
+  config.addOptions?.(command);
   command.action(async (...args: unknown[]) => {
     const positionalArgs = args.filter((arg): arg is string => typeof arg === "string");
     const options = normalizeOptions(command.opts());
@@ -101,12 +104,24 @@ function normalizeOptions(options: Record<string, unknown>): CliOptions {
     filterPackage: typeof options.filterPackage === "string" ? options.filterPackage : undefined,
     fileKind: typeof options.fileKind === "string" ? options.fileKind : undefined,
     symbolKind: typeof options.symbolKind === "string" ? options.symbolKind : undefined,
+    suite: typeof options.suite === "string" ? options.suite : undefined,
+    evalPack: typeof options.evalPack === "string" ? options.evalPack : undefined,
+    evalCachePath: typeof options.evalCachePath === "string" ? options.evalCachePath : undefined,
+    fetch: options.fetch === true,
     json: options.json === true,
     quiet: options.quiet === true,
     verbose: options.verbose === true,
     limit: boundedOption(options.limit, 50, "limit"),
     depth: boundedOption(options.depth, 4, "depth"),
   };
+}
+
+function addEvalOptions(command: Command): void {
+  command
+    .option("--suite <id>", "Built-in eval suite id.")
+    .option("--eval-pack <path>", "Path to an eval pack directory or pack.json file.")
+    .option("--eval-cache-path <path>", "Directory for on-demand external eval corpora.")
+    .option("--fetch", "Fetch an on-demand external eval corpus if it is not cached.", false);
 }
 
 function parseInteger(value: string): number {

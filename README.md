@@ -12,6 +12,7 @@ node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo 
 node dist/cli/main.js update --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --json
 node dist/cli/main.js find-symbol SomeSymbol --workspace /path/to/workspace --index-path /path/to/.code-intel/index --json
 node dist/cli/main.js semantic "wallet signer" --index-path /path/to/.code-intel/index --filter-repo react-sdk --filter-package @getpara/react-sdk --json
+node dist/cli/main.js eval --suite js-ts-general --json
 node dist/cli/main.js mcp --workspace /path/to/workspace --index-path /path/to/.code-intel/index
 ```
 
@@ -26,3 +27,20 @@ node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo 
 ```
 
 No hosted embedding API is used. The Jina model is downloaded into the configured index model cache on first use unless already cached.
+
+## Eval Packs
+
+`eval` runs pack-based quality checks. The default suite is `js-ts-general`, a committed synthetic corpus that stays small, deterministic, and fast enough for regression coverage:
+
+```bash
+node dist/cli/main.js eval --suite js-ts-general --json
+node dist/cli/main.js eval --suite js-ts-general --embedding-provider hash --json
+```
+
+The Rallly OSS app-flow pack is committed as metadata and cases only. It fetches the pinned external repository on demand into an eval cache:
+
+```bash
+node dist/cli/main.js eval --suite oss-rallly-app-flow --fetch --json
+```
+
+Use `--eval-cache-path /path/to/cache` to control where on-demand corpora are stored. Rallly is meant for real-world retrieval quality validation across frontend, API, package, database, middleware, and test paths; it is not a replacement for the synthetic regression gate.
