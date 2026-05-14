@@ -4,3 +4,4 @@ coverage/
 .code-intel/
 tmp/
 *.log
+.DS_Store
