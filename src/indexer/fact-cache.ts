@@ -23,6 +23,9 @@ import type {
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import { fingerprintKey } from "./update-planner.js";
 
+export const factsSchemaVersion = "code-intel.facts.v2";
+const embeddingFactsSchemaVersion = "code-intel.embeddings.v1";
+
 export interface ChunkFact {
   idSuffix: string;
   name: string;
@@ -55,6 +58,7 @@ export interface FileFact {
 
 export interface IndexFacts {
   schemaVersion: typeof schemaVersion;
+  factsSchemaVersion: typeof factsSchemaVersion;
   workspace: string;
   generatedAt: string;
   configHash: string;
@@ -64,6 +68,21 @@ export interface IndexFacts {
     dimension: number;
   };
   files: FileFact[];
+}
+
+interface IndexEmbeddingFacts {
+  schemaVersion: typeof schemaVersion;
+  factsSchemaVersion: typeof embeddingFactsSchemaVersion;
+  workspace: string;
+  generatedAt: string;
+  embedding: IndexFacts["embedding"];
+  chunks: Array<{
+    repo: string;
+    relativePath: string;
+    idSuffix: string;
+    embeddingInputHash: string;
+    embedding: number[];
+  }>;
 }
 
 const ChunkFactSchema = z.object({
@@ -89,7 +108,7 @@ const SourceFactBaseSchema = z.object({
 
 const SourceImportFactSchema = SourceFactBaseSchema.extend({
   moduleSpecifier: z.string().min(1),
-  importKind: z.enum(["value", "type", "side-effect"]),
+  importKind: z.enum(["value", "type", "side-effect", "dynamic", "commonjs"]),
   importedName: z.string().optional(),
   localName: z.string().optional(),
   isDefault: z.boolean(),
@@ -97,7 +116,7 @@ const SourceImportFactSchema = SourceFactBaseSchema.extend({
 });
 
 const SourceExportFactSchema = SourceFactBaseSchema.extend({
-  exportKind: z.enum(["local", "re-export", "default"]),
+  exportKind: z.enum(["local", "re-export", "default", "commonjs"]),
   exportedName: z.string().min(1),
   localName: z.string().optional(),
   moduleSpecifier: z.string().optional(),
@@ -111,6 +130,7 @@ const SourceDeclarationFactSchema = SourceFactBaseSchema.extend({
     "Class",
     "Interface",
     "TypeAlias",
+    "Variable",
     "VariableFunction",
     "ClassMethod",
     "Object",
@@ -118,18 +138,24 @@ const SourceDeclarationFactSchema = SourceFactBaseSchema.extend({
   ]),
   exported: z.boolean(),
   defaultExport: z.boolean(),
+  decorators: z.array(z.string()).default([]),
   parentName: z.string().optional(),
 });
 
 const SourceCallFactSchema = SourceFactBaseSchema.extend({
   name: z.string().min(1),
+  callKind: z.enum(["function", "member", "constructor", "dynamic-import", "jsx"]).default("function"),
   memberPath: z.string().optional(),
+  receiver: z.string().optional(),
+  propertyName: z.string().optional(),
+  optionalChain: z.boolean().default(false),
   containingDeclarationName: z.string().optional(),
 });
 
 const SourceMemberAccessFactSchema = SourceFactBaseSchema.extend({
   path: z.string().min(1),
   propertyName: z.string().min(1),
+  optionalChain: z.boolean().default(false),
   containingDeclarationName: z.string().optional(),
 });
 
@@ -170,6 +196,7 @@ const FileFactSchema = z.object({
 
 const IndexFactsSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
+  factsSchemaVersion: z.literal(factsSchemaVersion).default(factsSchemaVersion),
   workspace: z.string().min(1),
   generatedAt: z.string().datetime(),
   configHash: z.string().min(1),
@@ -181,15 +208,38 @@ const IndexFactsSchema = z.object({
   files: z.array(FileFactSchema),
 });
 
+const IndexEmbeddingFactsSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  factsSchemaVersion: z.literal(embeddingFactsSchemaVersion),
+  workspace: z.string().min(1),
+  generatedAt: z.string().datetime(),
+  embedding: z.object({
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    dimension: z.number().int().min(1),
+  }),
+  chunks: z.array(
+    z.object({
+      repo: z.string().min(1),
+      relativePath: z.string().min(1),
+      idSuffix: z.string().min(1),
+      embeddingInputHash: z.string().min(1),
+      embedding: z.array(z.number()),
+    }),
+  ),
+});
+
 export async function readActiveIndexFacts(indexPath: string): Promise<IndexFacts | undefined> {
   const generationPath = await resolveActiveGenerationPath(indexPath);
   if (!generationPath) {
     return undefined;
   }
   try {
-    return IndexFactsSchema.parse(
+    const facts = IndexFactsSchema.parse(
       JSON.parse(await readFile(join(generationPath, "facts", "files.json"), "utf8")),
     );
+    const embeddings = await readIndexEmbeddingFacts(generationPath);
+    return mergeEmbeddingFacts(facts, embeddings);
   } catch {
     return undefined;
   }
@@ -198,7 +248,99 @@ export async function readActiveIndexFacts(indexPath: string): Promise<IndexFact
 export async function writeIndexFacts(generationPath: string, facts: IndexFacts): Promise<void> {
   const factsPath = join(generationPath, "facts");
   await mkdir(factsPath, { recursive: true });
-  await writeJsonAtomically(join(factsPath, "files.json"), IndexFactsSchema.parse(facts));
+  const parsed = IndexFactsSchema.parse({ ...facts, factsSchemaVersion });
+  const embeddingFacts = extractEmbeddingFacts(parsed);
+  await writeJsonAtomically(join(factsPath, "files.json"), stripEmbeddings(parsed));
+  await writeJsonAtomically(join(factsPath, "embeddings.json"), IndexEmbeddingFactsSchema.parse(embeddingFacts));
+}
+
+async function readIndexEmbeddingFacts(generationPath: string): Promise<IndexEmbeddingFacts | undefined> {
+  try {
+    return IndexEmbeddingFactsSchema.parse(
+      JSON.parse(await readFile(join(generationPath, "facts", "embeddings.json"), "utf8")),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function mergeEmbeddingFacts(facts: IndexFacts, embeddingFacts: IndexEmbeddingFacts | undefined): IndexFacts {
+  if (
+    !embeddingFacts ||
+    embeddingFacts.embedding.provider !== facts.embedding.provider ||
+    embeddingFacts.embedding.model !== facts.embedding.model ||
+    embeddingFacts.embedding.dimension !== facts.embedding.dimension
+  ) {
+    return facts;
+  }
+  const embeddings = new Map(
+    embeddingFacts.chunks.map((chunk) => [embeddingKey(chunk), chunk.embedding]),
+  );
+  return {
+    ...facts,
+    files: facts.files.map((file) => ({
+      ...file,
+      chunks: file.chunks.map((chunk) => ({
+        ...chunk,
+        embedding: chunk.embedding ?? embeddings.get(
+          embeddingKey({
+            repo: file.fingerprint.repo,
+            relativePath: file.fingerprint.relativePath,
+            idSuffix: chunk.idSuffix,
+            embeddingInputHash: chunk.embeddingInputHash,
+          }),
+        ),
+      })),
+    })),
+  };
+}
+
+function extractEmbeddingFacts(facts: IndexFacts): IndexEmbeddingFacts {
+  return {
+    schemaVersion,
+    factsSchemaVersion: embeddingFactsSchemaVersion,
+    workspace: facts.workspace,
+    generatedAt: facts.generatedAt,
+    embedding: facts.embedding,
+    chunks: facts.files.flatMap((file) =>
+      file.chunks.flatMap((chunk) =>
+        chunk.embedding
+          ? [
+              {
+                repo: file.fingerprint.repo,
+                relativePath: file.fingerprint.relativePath,
+                idSuffix: chunk.idSuffix,
+                embeddingInputHash: chunk.embeddingInputHash,
+                embedding: chunk.embedding,
+              },
+            ]
+          : [],
+      ),
+    ),
+  };
+}
+
+function stripEmbeddings(facts: IndexFacts): IndexFacts {
+  return {
+    ...facts,
+    factsSchemaVersion,
+    files: facts.files.map((file) => ({
+      ...file,
+      chunks: file.chunks.map((chunk) => {
+        const { embedding, ...chunkWithoutEmbedding } = chunk;
+        return chunkWithoutEmbedding;
+      }),
+    })),
+  };
+}
+
+function embeddingKey(input: {
+  repo: string;
+  relativePath: string;
+  idSuffix: string;
+  embeddingInputHash: string;
+}): string {
+  return `${input.repo}\0${input.relativePath}\0${input.idSuffix}\0${input.embeddingInputHash}`;
 }
 
 export function filesByFingerprintKey(facts: IndexFacts | undefined): Map<string, FileFact> {

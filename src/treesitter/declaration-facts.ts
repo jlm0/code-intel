@@ -15,6 +15,7 @@ import {
   children,
   classNameForMethod,
   containsRange,
+  decoratorsForNode,
   directChildText,
   factBase,
   firstIdentifierLikeChild,
@@ -36,32 +37,44 @@ export function extractDeclarationFact(
   ancestors: TreeSitterNode[],
 ): SourceDeclarationFact | undefined {
   const exportAncestor = nearestAncestor(ancestors, "export_statement");
-  const exported = Boolean(exportAncestor);
-  const defaultExport = Boolean(exportAncestor && directChildText(exportAncestor, "default"));
+  const directlyExported = isDirectExportWrapper(ancestors);
+  const exported = Boolean(exportAncestor && directlyExported);
+  const defaultExport = Boolean(exportAncestor && directlyExported && directChildText(exportAncestor, "default"));
   const base = factBase(input, node);
+  const decorators = decoratorsForNode(node, ancestors);
 
-  if (node.type === "function_declaration") {
-    return namedDeclaration(base, node, "Function", exported, defaultExport);
+  if (node.type === "function_declaration" || (node.type === "function" && node.childCount > 0)) {
+    return namedDeclaration(base, node, "Function", exported, defaultExport, decorators);
   }
-  if (node.type === "class_declaration") {
-    return namedDeclaration(base, node, "Class", exported, defaultExport);
+  if (node.type === "class_declaration" || (node.type === "class" && node.childCount > 0)) {
+    return namedDeclaration(base, node, "Class", exported, defaultExport, decorators);
   }
   if (node.type === "interface_declaration") {
-    return namedDeclaration(base, node, "Interface", exported, defaultExport);
+    return namedDeclaration(base, node, "Interface", exported, defaultExport, decorators);
   }
   if (node.type === "type_alias_declaration") {
-    return namedDeclaration(base, node, "TypeAlias", exported, defaultExport);
+    return namedDeclaration(base, node, "TypeAlias", exported, defaultExport, decorators);
   }
   if (node.type === "method_definition") {
-    return methodDeclaration(node, ancestors, base);
+    return methodDeclaration(node, ancestors, base, decorators);
   }
   if (node.type === "pair") {
     return objectPairDeclaration(node, ancestors, base);
   }
   if (node.type === "variable_declarator") {
-    return variableDeclaration(node, base, exported, defaultExport);
+    return variableDeclaration(node, ancestors, base, exported, defaultExport);
   }
   return undefined;
+}
+
+function isDirectExportWrapper(ancestors: TreeSitterNode[]): boolean {
+  const parent = ancestors.at(-1);
+  const grandparent = ancestors.at(-2);
+  return (
+    parent?.type === "export_statement" ||
+    ((parent?.type === "lexical_declaration" || parent?.type === "variable_declaration") &&
+      grandparent?.type === "export_statement")
+  );
 }
 
 export function buildChunks(input: {
@@ -143,20 +156,25 @@ export function buildOwnerships(input: {
 }
 
 function namedDeclaration(
-  base: Omit<SourceDeclarationFact, "name" | "qualifiedName" | "kind" | "exported" | "defaultExport">,
+  base: Omit<
+    SourceDeclarationFact,
+    "name" | "qualifiedName" | "kind" | "exported" | "defaultExport" | "decorators"
+  >,
   node: TreeSitterNode,
   kind: SourceDeclarationKind,
   exported: boolean,
   defaultExport: boolean,
+  decorators: string[],
 ): SourceDeclarationFact | undefined {
-  const name = node.childForFieldName("name")?.text;
-  return name ? { ...base, name, qualifiedName: name, kind, exported, defaultExport } : undefined;
+  const name = node.childForFieldName("name")?.text ?? (defaultExport ? "default" : undefined);
+  return name ? { ...base, name, qualifiedName: name, kind, exported, defaultExport, decorators } : undefined;
 }
 
 function methodDeclaration(
   node: TreeSitterNode,
   ancestors: TreeSitterNode[],
   base: ReturnType<typeof factBase>,
+  decorators: string[],
 ): SourceDeclarationFact | undefined {
   const name = node.childForFieldName("name")?.text;
   if (!name) {
@@ -164,10 +182,10 @@ function methodDeclaration(
   }
   const className = classNameForMethod(ancestors);
   if (className) {
-    return childDeclaration(base, name, className, "ClassMethod");
+    return childDeclaration(base, name, className, "ClassMethod", decorators);
   }
   const objectName = objectNameForMember(ancestors);
-  return objectName ? childDeclaration(base, name, objectName, "ObjectMethod") : undefined;
+  return objectName ? childDeclaration(base, name, objectName, "ObjectMethod", decorators) : undefined;
 }
 
 function objectPairDeclaration(
@@ -181,27 +199,48 @@ function objectPairDeclaration(
   }
   const name = node.childForFieldName("key")?.text ?? firstIdentifierLikeChild(node);
   const objectName = objectNameForMember(ancestors);
-  return name && objectName ? childDeclaration(base, name, objectName, "ObjectMethod") : undefined;
+  return name && objectName ? childDeclaration(base, name, objectName, "ObjectMethod", []) : undefined;
 }
 
 function variableDeclaration(
   node: TreeSitterNode,
+  ancestors: TreeSitterNode[],
   base: ReturnType<typeof factBase>,
   exported: boolean,
   defaultExport: boolean,
 ): SourceDeclarationFact | undefined {
-  const name = node.childForFieldName("name")?.text;
+  const nameNode = node.childForFieldName("name");
+  if (
+    nameNode?.type !== "identifier" &&
+    nameNode?.type !== "property_identifier" &&
+    nameNode?.type !== "type_identifier"
+  ) {
+    return undefined;
+  }
+  const name = nameNode.text;
   const value = node.childForFieldName("value");
   if (!name || !value) {
     return undefined;
   }
   if (value.type === "arrow_function" || value.type === "function") {
-    return { ...base, name, qualifiedName: name, kind: "VariableFunction", exported, defaultExport };
+    return { ...base, name, qualifiedName: name, kind: "VariableFunction", exported, defaultExport, decorators: [] };
   }
   if (value.type === "object") {
-    return { ...base, name, qualifiedName: name, kind: "Object", exported, defaultExport };
+    return { ...base, name, qualifiedName: name, kind: "Object", exported, defaultExport, decorators: [] };
   }
-  return undefined;
+  if (!isTopLevelVariable(ancestors)) {
+    return undefined;
+  }
+  return { ...base, name, qualifiedName: name, kind: "Variable", exported, defaultExport, decorators: [] };
+}
+
+function isTopLevelVariable(ancestors: TreeSitterNode[]): boolean {
+  const parent = ancestors.at(-1);
+  const grandparent = ancestors.at(-2);
+  return (
+    (parent?.type === "lexical_declaration" || parent?.type === "variable_declaration") &&
+    (grandparent?.type === "program" || grandparent?.type === "export_statement")
+  );
 }
 
 function childDeclaration(
@@ -209,6 +248,7 @@ function childDeclaration(
   name: string,
   parentName: string,
   kind: "ClassMethod" | "ObjectMethod",
+  decorators: string[],
 ): SourceDeclarationFact {
   return {
     ...base,
@@ -217,6 +257,7 @@ function childDeclaration(
     kind,
     exported: false,
     defaultExport: false,
+    decorators,
     parentName,
   };
 }
@@ -264,6 +305,9 @@ function chunkKindForDeclaration(
   relativePath: string,
 ): SourceChunk["kind"] | undefined {
   if (kind === "Object") {
+    return undefined;
+  }
+  if (kind === "Variable") {
     return undefined;
   }
   if (relativePath.includes(".test.") || relativePath.includes(".spec.")) return "Test";

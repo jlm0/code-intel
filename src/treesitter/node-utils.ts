@@ -78,6 +78,8 @@ export function exportedDeclarationNames(node: TreeSitterNode): string[] {
       const name = candidate.childForFieldName("name")?.text;
       if (name) {
         names.push(name);
+      } else if ((candidate.type === "class" || candidate.type === "function") && candidate.childCount > 0) {
+        names.push("default");
       }
     }
     if (candidate.type === "lexical_declaration" || candidate.type === "variable_declaration") {
@@ -96,7 +98,15 @@ export function exportedDeclarationNames(node: TreeSitterNode): string[] {
 }
 
 export function classNameForMethod(ancestors: TreeSitterNode[]): string | undefined {
-  return nearestAncestor(ancestors, "class_declaration")?.childForFieldName("name")?.text;
+  const classDeclaration = nearestAncestor(ancestors, "class_declaration");
+  if (classDeclaration) {
+    return classDeclaration.childForFieldName("name")?.text;
+  }
+  const anonymousClass = nearestAncestor(ancestors, "class");
+  if (anonymousClass && nearestAncestor(ancestors, "export_statement")) {
+    return "default";
+  }
+  return undefined;
 }
 
 export function objectNameForMember(ancestors: TreeSitterNode[]): string | undefined {
@@ -164,7 +174,7 @@ export function rangeSize(range: SourceRange): number {
 }
 
 export function extractCallableName(text: string): string | undefined {
-  const normalized = text.split(".").at(-1)?.trim();
+  const normalized = text.split(".").at(-1)?.replaceAll("?", "").trim();
   if (!normalized || !/^[A-Za-z_$][\w$]*$/.test(normalized)) {
     return undefined;
   }
@@ -173,6 +183,28 @@ export function extractCallableName(text: string): string | undefined {
 
 export function normalizeMemberPath(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+export function memberParts(text: string): {
+  memberPath: string;
+  receiver?: string;
+  propertyName?: string;
+  optionalChain: boolean;
+} {
+  const memberPath = normalizeMemberPath(text);
+  const match = memberPath.match(/^(.*?)(?:\?\.|\.)([^.]+)$/);
+  const propertyName = match?.[2]?.replaceAll("?", "");
+  const receiver = match?.[1];
+  return {
+    memberPath,
+    receiver,
+    propertyName,
+    optionalChain: memberPath.includes("?."),
+  };
+}
+
+export function stringArgumentForCall(node: TreeSitterNode): string | undefined {
+  return firstStringArgument(node);
 }
 
 export function rangeForNode(node: TreeSitterNode): SourceRange {
@@ -205,7 +237,8 @@ export function hashContent(content: string): string {
 }
 
 export function languageLabelForFile(relativePath: string): SourceFileAstFacts["language"] {
-  if (relativePath.endsWith(".tsx") || relativePath.endsWith(".jsx")) return "tsx";
+  if (relativePath.endsWith(".tsx")) return "tsx";
+  if (relativePath.endsWith(".jsx")) return "jsx";
   if (relativePath.endsWith(".ts") || relativePath.endsWith(".mts") || relativePath.endsWith(".cts")) {
     return "typescript";
   }
@@ -263,7 +296,44 @@ export function nearestAncestor(ancestors: TreeSitterNode[], type: string): Tree
 }
 
 export function firstIdentifierLikeChild(node: TreeSitterNode): string | undefined {
-  return children(node).find((child) => child.type === "identifier" || child.type === "property_identifier")?.text;
+  return children(node).find(
+    (child) =>
+      child.type === "identifier" ||
+      child.type === "property_identifier" ||
+      child.type === "type_identifier",
+  )?.text;
+}
+
+export function decoratorsForNode(node: TreeSitterNode, ancestors: TreeSitterNode[]): string[] {
+  const decorators: string[] = [];
+  const parent = ancestors.at(-1);
+  if (parent) {
+    const siblings = children(parent);
+    const nodeIndex = siblings.findIndex((sibling) => sibling === node);
+    for (let index = nodeIndex - 1; index >= 0; index -= 1) {
+      const sibling = siblings[index];
+      if (sibling?.type !== "decorator") {
+        break;
+      }
+      decorators.unshift(sibling.text);
+    }
+  }
+
+  const exportAncestor = nearestAncestor(ancestors, "export_statement");
+  const grandparent = ancestors.at(-2);
+  const directlyExported =
+    parent?.type === "export_statement" ||
+    ((parent?.type === "lexical_declaration" || parent?.type === "variable_declaration") &&
+      grandparent?.type === "export_statement");
+  if (exportAncestor && directlyExported) {
+    decorators.unshift(
+      ...children(exportAncestor)
+        .filter((child) => child.type === "decorator")
+        .map((child) => child.text),
+    );
+  }
+
+  return unique(decorators);
 }
 
 export function sortFacts<T extends { range: SourceRange; idSuffix: string }>(facts: T[]): T[] {
@@ -285,7 +355,9 @@ function stringLiteralValue(node: TreeSitterNode): string {
 function isNamedDeclaration(node: TreeSitterNode): boolean {
   return (
     node.type === "function_declaration" ||
+    (node.type === "function" && node.childCount > 0) ||
     node.type === "class_declaration" ||
+    (node.type === "class" && node.childCount > 0) ||
     node.type === "interface_declaration" ||
     node.type === "type_alias_declaration"
   );

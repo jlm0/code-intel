@@ -25,6 +25,7 @@ export type SourceDeclarationKind =
   | "Class"
   | "Interface"
   | "TypeAlias"
+  | "Variable"
   | "VariableFunction"
   | "ClassMethod"
   | "Object"
@@ -41,6 +42,7 @@ export interface SourceDeclarationFact {
   ownerFile: string;
   exported: boolean;
   defaultExport: boolean;
+  decorators: string[];
   parentName?: string;
   containingChunkIdSuffix?: string;
 }
@@ -48,7 +50,7 @@ export interface SourceDeclarationFact {
 export interface SourceImportFact {
   idSuffix: string;
   moduleSpecifier: string;
-  importKind: "value" | "type" | "side-effect";
+  importKind: "value" | "type" | "side-effect" | "dynamic" | "commonjs";
   importedName?: string;
   localName?: string;
   isDefault: boolean;
@@ -62,7 +64,7 @@ export interface SourceImportFact {
 
 export interface SourceExportFact {
   idSuffix: string;
-  exportKind: "local" | "re-export" | "default";
+  exportKind: "local" | "re-export" | "default" | "commonjs";
   exportedName: string;
   localName?: string;
   moduleSpecifier?: string;
@@ -76,11 +78,15 @@ export interface SourceExportFact {
 export interface SourceCallFact {
   idSuffix: string;
   name: string;
+  callKind: "function" | "member" | "constructor" | "dynamic-import" | "jsx";
   range: SourceRange;
   sourceText: string;
   contentHash: string;
   ownerFile: string;
   memberPath?: string;
+  receiver?: string;
+  propertyName?: string;
+  optionalChain: boolean;
   containingDeclarationName?: string;
   containingChunkIdSuffix?: string;
 }
@@ -93,6 +99,7 @@ export interface SourceMemberAccessFact {
   sourceText: string;
   contentHash: string;
   ownerFile: string;
+  optionalChain: boolean;
   containingDeclarationName?: string;
   containingChunkIdSuffix?: string;
 }
@@ -133,7 +140,7 @@ export interface SourceCallbackFact {
 
 export interface SourceFileAstFacts {
   relativePath: string;
-  language: "javascript" | "typescript" | "tsx";
+  language: "javascript" | "jsx" | "typescript" | "tsx";
   chunks: SourceChunk[];
   imports: SourceImportFact[];
   exports: SourceExportFact[];

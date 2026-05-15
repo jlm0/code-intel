@@ -10,9 +10,11 @@ import {
   extractCallableName,
   factBase,
   firstStringArgument,
+  memberParts,
   nearestAncestor,
   nearestTestCaseName,
   normalizeMemberPath,
+  children,
 } from "./node-utils.js";
 
 export function extractTestCaseFact(
@@ -71,15 +73,69 @@ export function extractCallbackFact(
 }
 
 export function extractCallFact(input: ChunkSourceFileInput, node: TreeSitterNode): SourceCallFact | undefined {
+  if (node.type === "new_expression") {
+    const constructorNode = children(node).find(
+      (child) => child.type === "identifier" || child.type === "member_expression",
+    );
+    const name = extractCallableName(constructorNode?.text ?? "");
+    if (!name) {
+      return undefined;
+    }
+    const parts = constructorNode?.type === "member_expression" ? memberParts(constructorNode.text) : undefined;
+    return {
+      ...factBase(input, node),
+      name,
+      callKind: "constructor",
+      memberPath: parts?.memberPath,
+      receiver: parts?.receiver,
+      propertyName: parts?.propertyName,
+      optionalChain: false,
+    };
+  }
+
+  if (node.type === "jsx_opening_element" || node.type === "jsx_self_closing_element") {
+    const nameNode = children(node).find(
+      (child) => child.type === "identifier" || child.type === "member_expression",
+    );
+    const name = extractCallableName(nameNode?.text ?? "");
+    if (!name) {
+      return undefined;
+    }
+    const parts = nameNode?.type === "member_expression" ? memberParts(nameNode.text) : undefined;
+    return {
+      ...factBase(input, node),
+      name,
+      callKind: "jsx",
+      memberPath: parts?.memberPath,
+      receiver: parts?.receiver,
+      propertyName: parts?.propertyName,
+      optionalChain: false,
+    };
+  }
+
+  if (node.type !== "call_expression") {
+    return undefined;
+  }
+
   const functionNode = node.childForFieldName("function");
   const name = extractCallableName(functionNode?.text ?? "");
   if (!name) {
     return undefined;
   }
+  const parts = functionNode?.type === "member_expression" ? memberParts(functionNode.text) : undefined;
+  const callKind = functionNode?.text === "import"
+    ? "dynamic-import"
+    : functionNode?.type === "member_expression"
+      ? "member"
+      : "function";
   return {
     ...factBase(input, node),
     name,
-    memberPath: functionNode?.type === "member_expression" ? normalizeMemberPath(functionNode.text) : undefined,
+    callKind,
+    memberPath: parts?.memberPath,
+    receiver: parts?.receiver,
+    propertyName: parts?.propertyName,
+    optionalChain: Boolean(parts?.optionalChain),
   };
 }
 
@@ -96,5 +152,6 @@ export function extractMemberAccessFact(
     ...factBase(input, node),
     path,
     propertyName,
+    optionalChain: path.includes("?."),
   };
 }

@@ -21,6 +21,7 @@ import {
 import { discoverWorkspace, type DiscoveredFile } from "../workspace/discovery.js";
 import { embedGraphChunks, type EmbeddableChunkNode } from "./chunk-embeddings.js";
 import {
+  factsSchemaVersion,
   readActiveIndexFacts,
   writeIndexFacts,
   type FileFact,
@@ -210,6 +211,9 @@ async function buildIndexWorkspace(
       addAstBoundaryNodes(graph, workspace.workspaceName, repo, file, fileNode, fileFact);
       const chunks = fileFact.chunks;
       for (const chunk of chunks) {
+        const declaration = declarationForChunk(fileFact, chunk.idSuffix);
+        const qualifiedName = declaration?.qualifiedName;
+        const identityName = qualifiedName ?? chunk.name;
         const symbolNode = addNode(graph, {
           id: createStableId({
             kind: chunk.kind === "Test" ? "test" : "symbol",
@@ -217,7 +221,7 @@ async function buildIndexWorkspace(
             repo: repo.name,
             commit: repo.commit,
             relativePath: file.relativePath,
-            suffix: `${chunk.name}-${chunk.idSuffix}`,
+            suffix: `${identityName}-${chunk.idSuffix}`,
           }),
           kind: chunk.kind,
           workspace: workspace.workspaceName,
@@ -232,6 +236,9 @@ async function buildIndexWorkspace(
             absolutePath: file.absolutePath,
             fileKind: fileKindForPath(file.relativePath),
             symbolKind: chunk.kind,
+            displayName: chunk.name,
+            qualifiedName,
+            declarationKind: declaration?.kind,
             ownerRepo: repo.name,
             ownerFile: file.relativePath,
             origin: "tree-sitter",
@@ -261,6 +268,9 @@ async function buildIndexWorkspace(
             fileKind: fileKindForPath(file.relativePath),
             symbolKind: chunk.kind,
             symbolId: symbolNode.id,
+            displayName: chunk.name,
+            qualifiedName,
+            declarationKind: declaration?.kind,
             embeddingModel: embeddingProvider.model,
             embeddingProvider: embeddingProvider.provider,
             embeddingInputHash: chunk.embeddingInputHash,
@@ -467,6 +477,7 @@ async function buildIndexWorkspace(
   };
   const facts: IndexFacts = {
     schemaVersion,
+    factsSchemaVersion,
     workspace: workspace.workspaceName,
     generatedAt,
     configHash: fileFactPlan.configHash,
@@ -588,6 +599,10 @@ function addAstBoundaryNodes(
       ownerFileMetadata(repo.name, file.relativePath, "tree-sitter-export"),
     );
   }
+}
+
+function declarationForChunk(fileFact: FileFact, chunkIdSuffix: string): FileFact["declarations"][number] | undefined {
+  return fileFact.declarations.find((declaration) => declaration.containingChunkIdSuffix === chunkIdSuffix);
 }
 
 function createIncrementalStats(input: {

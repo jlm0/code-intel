@@ -32,5 +32,6 @@
       "tsconfig.json"
     ]
   },
-  "caseFiles": ["cases/app-flow.json"]
+  "caseFiles": ["cases/app-flow.json"],
+  "astCaseFiles": ["cases/ast-facts.json"]
 }

@@ -35,6 +35,7 @@ const EvalPackSchema = z.object({
   license: z.string().optional(),
   corpus: EvalCorpusSchema,
   caseFiles: z.array(z.string().min(1)).min(1),
+  astCaseFiles: z.array(z.string().min(1)).default([]),
 });
 
 const EvalExpectationSchema = z.object({
@@ -55,11 +56,30 @@ const EvalCaseSchema = z.object({
   failureClassHint: z.enum(["discovery", "chunking", "scip", "graph", "embedding", "query", "ranking"]).optional(),
 });
 
+const AstFactExpectationSchema = z.record(z.string(), z.unknown());
+
+const AstEvalCaseSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  file: z.string().min(1),
+  expected: z.object({
+    imports: z.array(AstFactExpectationSchema).default([]),
+    exports: z.array(AstFactExpectationSchema).default([]),
+    declarations: z.array(AstFactExpectationSchema).default([]),
+    calls: z.array(AstFactExpectationSchema).default([]),
+    memberAccesses: z.array(AstFactExpectationSchema).default([]),
+    ownerships: z.array(AstFactExpectationSchema).default([]),
+    testCases: z.array(AstFactExpectationSchema).default([]),
+    callbacks: z.array(AstFactExpectationSchema).default([]),
+  }),
+});
+
 export type EvalCorpus = z.infer<typeof EvalCorpusSchema>;
 export type EvalPack = z.infer<typeof EvalPackSchema>;
 export type EvalCase = z.infer<typeof EvalCaseSchema>;
 export type EvalExpectation = z.infer<typeof EvalExpectationSchema>;
 export type EvalFailureClass = NonNullable<EvalCase["failureClassHint"]> | "unknown";
+export type AstEvalCase = z.infer<typeof AstEvalCaseSchema>;
 
 export interface ResolveEvalPackInput {
   suite?: string;
@@ -84,6 +104,7 @@ export interface LoadedEvalPack {
   packPath: string;
   packRoot: string;
   cases: EvalCase[];
+  astCases: AstEvalCase[];
 }
 
 export interface PrepareEvalCorpusInput {
@@ -102,11 +123,17 @@ export async function loadEvalPack(input: ResolveEvalPackInput): Promise<LoadedE
       z.array(EvalCaseSchema).parse(JSON.parse(await readFile(resolve(packRoot, caseFile), "utf8"))),
     ),
   );
+  const astCaseGroups = await Promise.all(
+    pack.astCaseFiles.map(async (caseFile) =>
+      z.array(AstEvalCaseSchema).parse(JSON.parse(await readFile(resolve(packRoot, caseFile), "utf8"))),
+    ),
+  );
   return {
     pack,
     packPath,
     packRoot,
     cases: caseGroups.flat(),
+    astCases: astCaseGroups.flat(),
   };
 }
 

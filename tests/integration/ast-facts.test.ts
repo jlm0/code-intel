@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { resolveActiveGenerationPath } from "../../src/core/index-artifacts.js";
 import { LadybugGraphStore } from "../../src/graph/ladybug-store.js";
 import { readActiveIndexFacts } from "../../src/indexer/fact-cache.js";
 import { indexWorkspace } from "../../src/indexer/indexer.js";
@@ -15,6 +16,7 @@ type ExtractSourceFileFacts = (input: {
   relativePath: string;
   content: string;
 }) => {
+  language: string;
   chunks: Array<{ idSuffix: string; name: string; kind: string; calls: string[] }>;
   imports: Array<Record<string, unknown>>;
   exports: Array<Record<string, unknown>>;
@@ -66,6 +68,57 @@ describe("WidgetStore", () => {
     expect(total([1, 2, 3])).toBe(6);
   });
 });
+`;
+
+const advancedSyntaxSource = `import React from "react";
+import dynamic from "next/dynamic";
+import type { LoaderArgs } from "./types";
+
+const legacyWidget = require("./legacy").default;
+const { createLegacyThing: createThing } = require("./legacy-utils");
+const LazyAdmin = dynamic(() => import("./admin-page").then((mod) => mod.AdminPage));
+
+export * from "./star-source";
+export * as adminApi from "./admin-api";
+export type { LoaderArgs as AdminLoaderArgs } from "./types";
+export { createThing };
+
+@Injectable()
+export default class {
+  constructor(private readonly client: ApiClient) {}
+
+  @Trace()
+  async create() {
+    const created = await this.client?.polls?.create?.({ title: "Demo" });
+    return new PollCard(created);
+  }
+}
+
+module.exports = legacyWidget;
+exports.namedLegacy = createThing;
+
+export function AdminPageLoader() {
+  return (
+    <>
+      <PollBrandingFromContext />
+      <LazyAdmin />
+    </>
+  );
+}
+`;
+
+const commonJsSource = `const path = require("node:path");
+const { join: joinPath } = require("node:path");
+
+function createLegacyPoll(input) {
+  return joinPath(input.base, input.slug);
+}
+
+module.exports = {
+  createLegacyPoll,
+};
+
+exports.namedLegacyPoll = createLegacyPoll;
 `;
 
 describe("Tree-sitter structural facts", () => {
@@ -355,6 +408,250 @@ describe("Tree-sitter structural facts", () => {
     expect(facts.chunks.map((chunk) => chunk.name)).toContain("partiallyWritten");
   });
 
+  it("extracts A-grade JS/TS syntax facts for dynamic imports, CommonJS, decorators, constructors, optional calls, and JSX usage", async () => {
+    const extractSourceFileFacts = await loadExtractor();
+
+    const facts = extractSourceFileFacts({
+      relativePath: "packages/ui/src/AdminPageLoader.tsx",
+      content: advancedSyntaxSource,
+    });
+
+    expect(facts.language).toBe("tsx");
+    expect(facts.imports.map(importShape)).toEqual(
+      expect.arrayContaining([
+        {
+          importKind: "value",
+          importedName: "default",
+          isDefault: true,
+          isNamespace: false,
+          localName: "React",
+          moduleSpecifier: "react",
+        },
+        {
+          importKind: "type",
+          importedName: "LoaderArgs",
+          isDefault: false,
+          isNamespace: false,
+          localName: "LoaderArgs",
+          moduleSpecifier: "./types",
+        },
+        {
+          importKind: "commonjs",
+          importedName: "default",
+          isDefault: true,
+          isNamespace: false,
+          localName: "legacyWidget",
+          moduleSpecifier: "./legacy",
+        },
+        {
+          importKind: "commonjs",
+          importedName: "createLegacyThing",
+          isDefault: false,
+          isNamespace: false,
+          localName: "createThing",
+          moduleSpecifier: "./legacy-utils",
+        },
+        {
+          importKind: "dynamic",
+          importedName: "default",
+          isDefault: true,
+          isNamespace: false,
+          localName: undefined,
+          moduleSpecifier: "./admin-page",
+        },
+      ]),
+    );
+    expect(facts.exports.map(exportShape)).toEqual(
+      expect.arrayContaining([
+        {
+          exportKind: "re-export",
+          exportedName: "*",
+          localName: "*",
+          moduleSpecifier: "./star-source",
+        },
+        {
+          exportKind: "re-export",
+          exportedName: "adminApi",
+          localName: "*",
+          moduleSpecifier: "./admin-api",
+        },
+        {
+          exportKind: "re-export",
+          exportedName: "AdminLoaderArgs",
+          localName: "LoaderArgs",
+          moduleSpecifier: "./types",
+        },
+        {
+          exportKind: "default",
+          exportedName: "default",
+          localName: "default",
+          moduleSpecifier: undefined,
+        },
+        {
+          exportKind: "commonjs",
+          exportedName: "module.exports",
+          localName: "legacyWidget",
+          moduleSpecifier: undefined,
+        },
+        {
+          exportKind: "commonjs",
+          exportedName: "namedLegacy",
+          localName: "createThing",
+          moduleSpecifier: undefined,
+        },
+      ]),
+    );
+    expect(facts.declarations.map(declarationWithDecoratorsShape)).toEqual(
+      expect.arrayContaining([
+        {
+          decorators: ["@Injectable()"],
+          defaultExport: true,
+          exported: true,
+          kind: "Class",
+          name: "default",
+          parentName: undefined,
+          qualifiedName: "default",
+        },
+        {
+          decorators: [],
+          defaultExport: false,
+          exported: false,
+          kind: "ClassMethod",
+          name: "constructor",
+          parentName: "default",
+          qualifiedName: "default.constructor",
+        },
+        {
+          decorators: ["@Trace()"],
+          defaultExport: false,
+          exported: false,
+          kind: "ClassMethod",
+          name: "create",
+          parentName: "default",
+          qualifiedName: "default.create",
+        },
+        {
+          decorators: [],
+          defaultExport: false,
+          exported: false,
+          kind: "Variable",
+          name: "LazyAdmin",
+          parentName: undefined,
+          qualifiedName: "LazyAdmin",
+        },
+        {
+          decorators: [],
+          defaultExport: false,
+          exported: true,
+          kind: "Function",
+          name: "AdminPageLoader",
+          parentName: undefined,
+          qualifiedName: "AdminPageLoader",
+        },
+      ]),
+    );
+    expect(facts.calls.map(callEvidenceShape)).toEqual(
+      expect.arrayContaining([
+        {
+          callKind: "constructor",
+          containingDeclarationName: "default.create",
+          memberPath: undefined,
+          name: "PollCard",
+          optionalChain: false,
+          propertyName: undefined,
+          receiver: undefined,
+        },
+        {
+          callKind: "member",
+          containingDeclarationName: "default.create",
+          memberPath: "this.client?.polls?.create",
+          name: "create",
+          optionalChain: true,
+          propertyName: "create",
+          receiver: "this.client?.polls",
+        },
+        {
+          callKind: "dynamic-import",
+          containingDeclarationName: "LazyAdmin",
+          memberPath: undefined,
+          name: "import",
+          optionalChain: false,
+          propertyName: undefined,
+          receiver: undefined,
+        },
+        {
+          callKind: "jsx",
+          containingDeclarationName: "AdminPageLoader",
+          memberPath: undefined,
+          name: "PollBrandingFromContext",
+          optionalChain: false,
+          propertyName: undefined,
+          receiver: undefined,
+        },
+        {
+          callKind: "jsx",
+          containingDeclarationName: "AdminPageLoader",
+          memberPath: undefined,
+          name: "LazyAdmin",
+          optionalChain: false,
+          propertyName: undefined,
+          receiver: undefined,
+        },
+      ]),
+    );
+
+    const jsFacts = extractSourceFileFacts({
+      relativePath: "packages/legacy/src/commonjs.js",
+      content: commonJsSource,
+    });
+    expect(jsFacts.language).toBe("javascript");
+    expect(jsFacts.imports.map(importShape)).toEqual(
+      expect.arrayContaining([
+        {
+          importKind: "commonjs",
+          importedName: "default",
+          isDefault: true,
+          isNamespace: false,
+          localName: "path",
+          moduleSpecifier: "node:path",
+        },
+        {
+          importKind: "commonjs",
+          importedName: "join",
+          isDefault: false,
+          isNamespace: false,
+          localName: "joinPath",
+          moduleSpecifier: "node:path",
+        },
+      ]),
+    );
+    expect(jsFacts.exports.map(exportShape)).toEqual(
+      expect.arrayContaining([
+        {
+          exportKind: "commonjs",
+          exportedName: "module.exports",
+          localName: undefined,
+          moduleSpecifier: undefined,
+        },
+        {
+          exportKind: "commonjs",
+          exportedName: "namedLegacyPoll",
+          localName: "createLegacyPoll",
+          moduleSpecifier: undefined,
+        },
+      ]),
+    );
+    expect(jsFacts.declarations.map(declarationWithDecoratorsShape)).toContainEqual({
+      decorators: [],
+      defaultExport: false,
+      exported: false,
+      kind: "Function",
+      name: "createLegacyPoll",
+      parentName: undefined,
+      qualifiedName: "createLegacyPoll",
+    });
+  });
+
   it("persists structural facts with file facts for incremental reuse", async () => {
     const indexPath = await mkdtemp(join(tmpdir(), "code-intel-ast-facts-"));
     try {
@@ -420,6 +717,27 @@ describe("Tree-sitter structural facts", () => {
         parentName: undefined,
       });
 
+      const generationPath = await resolveActiveGenerationPath(indexPath);
+      expect(generationPath).toBeDefined();
+      const filesJson = JSON.parse(
+        await readFile(join(generationPath!, "facts", "files.json"), "utf8"),
+      ) as Record<string, unknown>;
+      const embeddingsJson = JSON.parse(
+        await readFile(join(generationPath!, "facts", "embeddings.json"), "utf8"),
+      ) as { chunks: Array<Record<string, unknown>> };
+      expect(filesJson).toMatchObject({
+        factsSchemaVersion: "code-intel.facts.v2",
+      });
+      const storedFiles = filesJson.files as Array<{ chunks: Array<Record<string, unknown>> }>;
+      expect(storedFiles.flatMap((file) => file.chunks).some((chunk) => "embedding" in chunk)).toBe(false);
+      expect(embeddingsJson).toMatchObject({
+        factsSchemaVersion: "code-intel.embeddings.v1",
+        embedding: {
+          provider: "hash",
+        },
+      });
+      expect(embeddingsJson.chunks.length).toBeGreaterThan(0);
+
       const store = new LadybugGraphStore(indexPath);
       try {
         const nodes = await store.getNodes();
@@ -436,8 +754,16 @@ describe("Tree-sitter structural facts", () => {
             node.file === "packages/core/src/index.ts" &&
             node.metadata.exportedName === "GivingLedger",
         );
+        const summarizeNode = nodes.find(
+          (node) =>
+            node.kind === "Function" &&
+            node.file === "packages/core/src/ledger.ts" &&
+            node.metadata.qualifiedName === "GivingLedger.summarize",
+        );
         expect(ledgerImport).toBeDefined();
         expect(barrelExport).toBeDefined();
+        expect(summarizeNode?.id).toContain("GivingLedger.summarize");
+        expect(summarizeNode?.name).toBe("summarize");
         expect(edges).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ kind: "IMPORTS", toId: ledgerImport?.id }),
@@ -490,11 +816,28 @@ function declarationShape(fact: Record<string, unknown>): Record<string, unknown
   };
 }
 
+function declarationWithDecoratorsShape(fact: Record<string, unknown>): Record<string, unknown> {
+  return {
+    decorators: fact.decorators,
+    ...declarationShape(fact),
+  };
+}
+
 function callShape(fact: Record<string, unknown>): Record<string, unknown> {
   return {
     containingDeclarationName: fact.containingDeclarationName,
     memberPath: fact.memberPath,
     name: fact.name,
+  };
+}
+
+function callEvidenceShape(fact: Record<string, unknown>): Record<string, unknown> {
+  return {
+    callKind: fact.callKind,
+    ...callShape(fact),
+    optionalChain: fact.optionalChain,
+    propertyName: fact.propertyName,
+    receiver: fact.receiver,
   };
 }
 

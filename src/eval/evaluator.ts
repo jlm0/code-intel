@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -14,12 +14,14 @@ import {
   defaultEvalSuiteId,
   loadEvalPack,
   prepareEvalCorpus,
+  type AstEvalCase,
   type EvalCase,
   type EvalExpectation,
   type EvalFailureClass,
   type EvalPack,
   type PreparedEvalCorpus,
 } from "./eval-pack.js";
+import { extractSourceFileFacts } from "../treesitter/chunker.js";
 
 export interface EvalOptions {
   workspace?: string;
@@ -58,6 +60,7 @@ export interface EvalReport {
     repos: IndexManifest["repos"];
   };
   cases: EvalCaseResult[];
+  astCases: AstEvalCaseResult[];
 }
 
 export interface EvalCaseResult {
@@ -84,6 +87,24 @@ export interface EvalCaseResult {
 export interface EvalExpectationResult extends EvalExpectation {
   found: boolean;
   rank?: number;
+}
+
+export interface AstEvalCaseResult {
+  id: string;
+  name: string;
+  file: string;
+  status: "pass" | "fail";
+  expected: Record<string, AstFactExpectationResult[]>;
+  actual: {
+    hasParseError: boolean;
+    counts: Record<string, number>;
+  };
+  failureClass?: EvalFailureClass;
+}
+
+export interface AstFactExpectationResult {
+  expected: Record<string, unknown>;
+  found: boolean;
 }
 
 export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalReport> {
@@ -114,10 +135,14 @@ export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalRepor
       for (const testCase of loadedPack.cases) {
         cases.push(await runEvalCase(testCase, engine));
       }
+      const astCases: AstEvalCaseResult[] = [];
+      for (const testCase of loadedPack.astCases) {
+        astCases.push(await runAstEvalCase(testCase, corpus));
+      }
 
       return {
         schemaVersion,
-        status: cases.every((testCase) => testCase.status === "pass") ? "pass" : "fail",
+        status: [...cases, ...astCases].every((testCase) => testCase.status === "pass") ? "pass" : "fail",
         suite: {
           id: loadedPack.pack.id,
           name: loadedPack.pack.name,
@@ -133,6 +158,7 @@ export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalRepor
           repos: manifest.repos,
         },
         cases,
+        astCases,
       };
     } finally {
       await engine.close();
@@ -140,6 +166,94 @@ export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalRepor
   } finally {
     await rm(indexPath, { recursive: true, force: true });
   }
+}
+
+async function runAstEvalCase(
+  testCase: AstEvalCase,
+  corpus: PreparedEvalCorpus,
+): Promise<AstEvalCaseResult> {
+  let facts: ReturnType<typeof extractSourceFileFacts>;
+  try {
+    facts = extractSourceFileFacts({
+      relativePath: testCase.file,
+      content: await readFile(join(corpus.path, testCase.file), "utf8"),
+    });
+  } catch {
+    return {
+      id: testCase.id,
+      name: testCase.name,
+      file: testCase.file,
+      status: "fail",
+      expected: evaluateAstExpectations(testCase.expected, emptyAstFactGroups()),
+      actual: {
+        hasParseError: true,
+        counts: {},
+      },
+      failureClass: "discovery",
+    };
+  }
+
+  const factGroups = {
+    imports: facts.imports,
+    exports: facts.exports,
+    declarations: facts.declarations,
+    calls: facts.calls,
+    memberAccesses: facts.memberAccesses,
+    ownerships: facts.ownerships,
+    testCases: facts.testCases,
+    callbacks: facts.callbacks,
+  };
+  const expected = evaluateAstExpectations(
+    testCase.expected,
+    factGroups as unknown as Record<string, Array<Record<string, unknown>>>,
+  );
+  const status = Object.values(expected).flat().every((result) => result.found) ? "pass" : "fail";
+  return {
+    id: testCase.id,
+    name: testCase.name,
+    file: testCase.file,
+    status,
+    expected,
+    actual: {
+      hasParseError: facts.hasParseError,
+      counts: Object.fromEntries(
+        Object.entries(factGroups).map(([name, group]) => [name, group.length]),
+      ),
+    },
+    failureClass: status === "pass" ? undefined : "chunking",
+  };
+}
+
+function evaluateAstExpectations(
+  expected: AstEvalCase["expected"],
+  factGroups: Record<string, Array<Record<string, unknown>>>,
+): Record<string, AstFactExpectationResult[]> {
+  return Object.fromEntries(
+    Object.entries(expected).map(([groupName, expectations]) => [
+      groupName,
+      expectations.map((expectation) => ({
+        expected: expectation,
+        found: (factGroups[groupName] ?? []).some((fact) => matchesPartialFact(fact, expectation)),
+      })),
+    ]),
+  );
+}
+
+function emptyAstFactGroups(): Record<string, Array<Record<string, unknown>>> {
+  return {
+    imports: [],
+    exports: [],
+    declarations: [],
+    calls: [],
+    memberAccesses: [],
+    ownerships: [],
+    testCases: [],
+    callbacks: [],
+  };
+}
+
+function matchesPartialFact(fact: Record<string, unknown>, expected: Record<string, unknown>): boolean {
+  return Object.entries(expected).every(([key, value]) => fact[key] === value);
 }
 
 async function runEvalCase(

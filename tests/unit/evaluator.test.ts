@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { loadEvalPack } from "../../src/eval/eval-pack.js";
 import { runEvalSuite } from "../../src/eval/evaluator.js";
 
 describe("runEvalSuite", () => {
@@ -61,5 +62,34 @@ describe("runEvalSuite", () => {
     } finally {
       await rm(evalCachePath, { recursive: true, force: true });
     }
+  });
+
+  it("loads pinned Rallly AST eval cases for route, API, database, UI, middleware, and test files", async () => {
+    const loadedPack = await loadEvalPack({
+      suite: "oss-rallly-app-flow",
+      workspaceRoot: process.cwd(),
+    });
+    const astCases = (loadedPack as unknown as {
+      astCases?: Array<{ id: string; file: string }>;
+    }).astCases;
+
+    expect(astCases?.map((testCase) => testCase.id)).toEqual([
+      "rallly.ast.api-route",
+      "rallly.ast.api-mutation",
+      "rallly.ast.database-client",
+      "rallly.ast.web-ui-loader",
+      "rallly.ast.middleware",
+      "rallly.ast.private-api-test",
+    ]);
+    expect(astCases?.map((testCase) => testCase.file)).toEqual(
+      expect.arrayContaining([
+        "apps/api/src/routes/polls.ts",
+        "packages/api-core/src/polls/mutations.ts",
+        "packages/database/src/client.ts",
+        "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page-loader.tsx",
+        "apps/api/src/middleware/api-key.ts",
+        "apps/web/src/app/api/private/[...route]/route.test.ts",
+      ]),
+    );
   });
 });

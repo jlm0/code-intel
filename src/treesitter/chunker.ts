@@ -4,7 +4,13 @@ import {
   buildOwnerships,
   extractDeclarationFact,
 } from "./declaration-facts.js";
-import { extractExportFacts, extractImportFacts } from "./module-facts.js";
+import {
+  extractCommonJsExportFact,
+  extractCommonJsImportFacts,
+  extractDynamicImportFact,
+  extractExportFacts,
+  extractImportFacts,
+} from "./module-facts.js";
 import {
   fallbackRange,
   hashContent,
@@ -75,6 +81,12 @@ export function extractSourceFileFacts(input: ChunkSourceFileInput): SourceFileA
     if (node.type === "export_statement") {
       exports.push(...extractExportFacts(input, node));
     }
+    if (node.type === "assignment_expression") {
+      const commonJsExport = extractCommonJsExportFact(input, node);
+      if (commonJsExport) {
+        exports.push(commonJsExport);
+      }
+    }
 
     const declaration = extractDeclarationFact(input, node, ancestors);
     if (declaration) {
@@ -92,6 +104,19 @@ export function extractSourceFileFacts(input: ChunkSourceFileInput): SourceFileA
     }
 
     if (node.type === "call_expression") {
+      const dynamicImport = extractDynamicImportFact(input, node);
+      if (dynamicImport) {
+        imports.push(dynamicImport);
+      }
+      imports.push(...extractCommonJsImportFacts(input, node, ancestors));
+    }
+
+    if (
+      node.type === "call_expression" ||
+      node.type === "new_expression" ||
+      node.type === "jsx_opening_element" ||
+      node.type === "jsx_self_closing_element"
+    ) {
       const call = extractCallFact(input, node);
       if (call) {
         calls.push(call);
