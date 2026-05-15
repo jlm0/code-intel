@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   type IncrementalStats,
   type IndexManifest,
 } from "../schema/schemas.js";
+import { scipFactsSchemaVersion, writeScipFacts, type RepoScipFacts } from "../scip/fact-cache.js";
 import { ingestScipIndex } from "../scip/ingest.js";
 import { runScipTypescript } from "../scip/runner.js";
 import {
@@ -28,6 +28,7 @@ import {
   type IndexFacts,
 } from "./fact-cache.js";
 import { prepareFileFacts } from "./file-facts.js";
+import { addTreeSitterFallbackRelationships, applyScipGraphFacts } from "./scip-fusion.js";
 import { fingerprintKey, type IncrementalPlan } from "./update-planner.js";
 
 export interface IndexWorkspaceInput {
@@ -110,6 +111,7 @@ async function buildIndexWorkspace(
     chunks: new Map(),
   };
   const health: IndexManifest["health"] = [];
+  const scipFactsByRepo: RepoScipFacts[] = [];
   const workspaceNode = addNode(graph, {
     id: createStableId({
       kind: "workspace",
@@ -199,6 +201,8 @@ async function buildIndexWorkspace(
 
     const fileNodes = new Map<string, CodeNode>();
     const symbolNodesByName = new Map<string, CodeNode[]>();
+    const astSymbolsByFile = new Map<string, CodeNode[]>();
+    const fileFactsByRelativePath = new Map<string, FileFact>();
     const fileChunks = new Map<string, Array<CodeNode & { sourceCalls: string[] }>>();
 
     for (const file of repo.files) {
@@ -208,6 +212,7 @@ async function buildIndexWorkspace(
       if (!fileFact) {
         continue;
       }
+      fileFactsByRelativePath.set(file.relativePath, fileFact);
       addAstBoundaryNodes(graph, workspace.workspaceName, repo, file, fileNode, fileFact);
       const chunks = fileFact.chunks;
       for (const chunk of chunks) {
@@ -293,35 +298,23 @@ async function buildIndexWorkspace(
           symbolNodesByName.set(chunk.name, []);
         }
         symbolNodesByName.get(chunk.name)?.push(symbolNode);
+        const fileSymbols = astSymbolsByFile.get(file.relativePath) ?? [];
+        fileSymbols.push(symbolNode);
+        astSymbolsByFile.set(file.relativePath, fileSymbols);
         const existingChunks = fileChunks.get(file.relativePath) ?? [];
         existingChunks.push({ ...chunkNode, sourceCalls: chunk.calls });
         fileChunks.set(file.relativePath, existingChunks);
       }
-    }
-
-    for (const chunks of fileChunks.values()) {
-      for (const chunk of chunks) {
-        for (const callName of chunk.sourceCalls) {
-          for (const target of symbolNodesByName.get(callName) ?? []) {
-            const ownerMetadata = ownerFileMetadata(repo.name, chunk.file ?? "", "tree-sitter-call");
-            addEdge(graph, "CALLS", chunk.id, target.id, workspace.workspaceName, repo.name, ownerMetadata);
-            const sourceSymbolId = String(chunk.metadata.symbolId ?? "");
-            if (sourceSymbolId && sourceSymbolId !== target.id) {
-              addEdge(graph, "CALLS", sourceSymbolId, target.id, workspace.workspaceName, repo.name, ownerMetadata);
-            }
-          }
-        }
-      }
-    }
-
-    if (repo.files.length <= 100) {
-      addFallbackReferenceEdges(graph, symbolNodesByName, workspace.workspaceName, repo.name);
-    } else {
-      health.push({
-        name: `tree-sitter-reference-fallback:${repo.name}`,
-        status: "warn",
-        message: "Skipped quadratic fallback reference scan for large repo; SCIP references remain canonical",
-        details: { files: repo.files.length },
+      addDeclarationSymbolNodes({
+        graph,
+        workspaceName: workspace.workspaceName,
+        repo,
+        file,
+        fileNode,
+        fileFact,
+        symbolNodesByName,
+        astSymbolsByFile,
+        fileChunks,
       });
     }
 
@@ -333,100 +326,42 @@ async function buildIndexWorkspace(
     });
     if (scipRun.ok) {
       const facts = await ingestScipIndex(scipOutputPath);
-      const scipSymbolNodes = new Map<string, CodeNode>();
-      for (const definition of facts.definitions) {
-        const fileNode = fileNodes.get(definition.relativePath);
-        const symbolNode = addNode(graph, {
-          id: createStableId({
-            kind: "symbol",
-            workspace: workspace.workspaceName,
-            repo: repo.name,
-            commit: repo.commit,
-            relativePath: definition.relativePath,
-            suffix: `scip-${definition.name}-${hashShort(definition.symbol)}`,
-          }),
-          kind: "Symbol",
-          workspace: workspace.workspaceName,
-          repo: repo.name,
-          file: definition.relativePath,
-          name: definition.name,
-          range: definition.range,
-          metadata: {
-            source: "scip-typescript",
-            scipSymbol: definition.symbol,
-            documentation: definition.documentation,
-            fileKind: fileKindForPath(definition.relativePath),
-            symbolKind: "Symbol",
-            ownerRepo: repo.name,
-            ownerFile: definition.relativePath,
-            origin: "scip-typescript",
-            derivedFrom: definition.symbol,
-          },
-        });
-        scipSymbolNodes.set(definition.symbol, symbolNode);
-        if (fileNode) {
-          addEdge(
-            graph,
-            "DEFINES",
-            fileNode.id,
-            symbolNode.id,
-            workspace.workspaceName,
-            repo.name,
-            ownerFileMetadata(repo.name, definition.relativePath, "scip-typescript"),
-          );
-        }
-        if (definition.range) {
-          for (const chunk of fileChunks.get(definition.relativePath) ?? []) {
-            if (!chunk.range) continue;
-            if (rangesOverlap(chunk.range, definition.range)) {
-              addEdge(
-                graph,
-                "MENTIONS",
-                chunk.id,
-                symbolNode.id,
-                workspace.workspaceName,
-                repo.name,
-                ownerFileMetadata(repo.name, definition.relativePath, "scip-typescript"),
-              );
-            }
-          }
-        }
-      }
-      for (const reference of facts.references) {
-        const fileNode = fileNodes.get(reference.relativePath);
-        const symbolNode = scipSymbolNodes.get(reference.symbol);
-        if (fileNode && symbolNode) {
-          addEdge(
-            graph,
-            "REFERENCES",
-            fileNode.id,
-            symbolNode.id,
-            workspace.workspaceName,
-            repo.name,
-            ownerFileMetadata(repo.name, reference.relativePath, "scip-typescript"),
-          );
-        }
-        if (symbolNode) {
-          const containingChunk = findContainingChunk(
-            fileChunks.get(reference.relativePath) ?? [],
-            reference.range,
-          );
-          if (containingChunk) {
-            const ownerMetadata = ownerFileMetadata(repo.name, reference.relativePath, "scip-typescript");
-            addEdge(graph, "REFERENCES", containingChunk.id, symbolNode.id, workspace.workspaceName, repo.name, ownerMetadata);
-            if (containingChunk.kind === "Test") {
-              addEdge(graph, "TESTS", containingChunk.id, symbolNode.id, workspace.workspaceName, repo.name, ownerMetadata);
-            }
-          }
-        }
-      }
+      scipFactsByRepo.push({
+        name: repo.name,
+        outputPath: scipOutputPath,
+        ...facts,
+      });
+      applyScipGraphFacts({
+        facts,
+        workspaceName: workspace.workspaceName,
+        repo,
+        fileNodes,
+        fileChunks,
+        astSymbolsByFile,
+        fileFactsByRelativePath,
+        addNode: (node) => addNode(graph, node),
+        addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
+          addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
+      });
       health.push({
         name: `scip:${repo.name}`,
         status: "pass",
-        message: `SCIP indexed ${facts.definitions.length} definitions and ${facts.references.length} references`,
+        message: `SCIP indexed ${facts.definitions.length} definitions, ${facts.references.length} references, and ${facts.occurrences.length} occurrences`,
         details: { outputPath: scipOutputPath },
       });
     } else {
+      health.push(
+        ...addTreeSitterFallbackRelationships({
+          graph,
+          fileChunks,
+          symbolNodesByName,
+          workspaceName: workspace.workspaceName,
+          repoName: repo.name,
+          fileCount: repo.files.length,
+          addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
+            addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
+        }),
+      );
       health.push({
         name: `scip:${repo.name}`,
         status: "warn",
@@ -496,6 +431,13 @@ async function buildIndexWorkspace(
   await writeJsonAtomically(join(generation.generationPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(generation.generationPath, "workspace.json"), workspace);
   await writeIndexFacts(generation.generationPath, facts);
+  await writeScipFacts(generation.generationPath, {
+    schemaVersion,
+    factsSchemaVersion: scipFactsSchemaVersion,
+    workspace: workspace.workspaceName,
+    generatedAt,
+    repos: scipFactsByRepo,
+  });
   await store.publishGeneration(generation.generationId);
   await writeJsonAtomically(join(input.indexPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(input.indexPath, "workspace.json"), workspace);
@@ -605,6 +547,98 @@ function declarationForChunk(fileFact: FileFact, chunkIdSuffix: string): FileFac
   return fileFact.declarations.find((declaration) => declaration.containingChunkIdSuffix === chunkIdSuffix);
 }
 
+function addDeclarationSymbolNodes(input: {
+  graph: MutableGraph;
+  workspaceName: string;
+  repo: { name: string; commit: string };
+  file: DiscoveredFile;
+  fileNode: CodeNode;
+  fileFact: FileFact;
+  symbolNodesByName: Map<string, CodeNode[]>;
+  astSymbolsByFile: Map<string, CodeNode[]>;
+  fileChunks: Map<string, Array<CodeNode & { sourceCalls: string[] }>>;
+}): void {
+  const chunkIds = new Set(input.fileFact.chunks.map((chunk) => chunk.idSuffix));
+  for (const declaration of input.fileFact.declarations) {
+    if (declaration.containingChunkIdSuffix && chunkIds.has(declaration.containingChunkIdSuffix)) {
+      continue;
+    }
+    const symbolNode = addNode(input.graph, {
+      id: createStableId({
+        kind: "symbol",
+        workspace: input.workspaceName,
+        repo: input.repo.name,
+        commit: input.repo.commit,
+        relativePath: input.file.relativePath,
+        suffix: `${declaration.qualifiedName}-${declaration.idSuffix}`,
+      }),
+      kind: nodeKindForDeclaration(declaration.kind),
+      workspace: input.workspaceName,
+      repo: input.repo.name,
+      packageName: input.file.packageName,
+      file: input.file.relativePath,
+      name: declaration.name,
+      language: input.file.language,
+      range: declaration.range,
+      textHash: declaration.contentHash,
+      metadata: {
+        absolutePath: input.file.absolutePath,
+        fileKind: fileKindForPath(input.file.relativePath),
+        symbolKind: nodeKindForDeclaration(declaration.kind),
+        displayName: declaration.name,
+        qualifiedName: declaration.qualifiedName,
+        declarationKind: declaration.kind,
+        exported: declaration.exported,
+        defaultExport: declaration.defaultExport,
+        decorators: declaration.decorators,
+        parentName: declaration.parentName,
+        ownerRepo: input.repo.name,
+        ownerFile: input.file.relativePath,
+        origin: "tree-sitter-declaration",
+        derivedFrom: declaration.contentHash,
+      },
+    });
+    const ownerMetadata = ownerFileMetadata(input.repo.name, input.file.relativePath, "tree-sitter-declaration");
+    addEdge(input.graph, "DEFINES", input.fileNode.id, symbolNode.id, input.workspaceName, input.repo.name, ownerMetadata);
+    for (const chunk of input.fileChunks.get(input.file.relativePath) ?? []) {
+      if (chunk.range && rangesOverlap(chunk.range, declaration.range)) {
+        addEdge(input.graph, "MENTIONS", chunk.id, symbolNode.id, input.workspaceName, input.repo.name, ownerMetadata);
+      }
+    }
+    const symbolsByName = input.symbolNodesByName.get(declaration.name) ?? [];
+    symbolsByName.push(symbolNode);
+    input.symbolNodesByName.set(declaration.name, symbolsByName);
+    const fileSymbols = input.astSymbolsByFile.get(input.file.relativePath) ?? [];
+    fileSymbols.push(symbolNode);
+    input.astSymbolsByFile.set(input.file.relativePath, fileSymbols);
+  }
+}
+
+function nodeKindForDeclaration(kind: FileFact["declarations"][number]["kind"]): CodeNode["kind"] {
+  switch (kind) {
+    case "Function":
+    case "VariableFunction":
+    case "ClassMethod":
+    case "ObjectMethod":
+      return "Function";
+    case "Class":
+      return "Class";
+    case "Interface":
+      return "Interface";
+    case "TypeAlias":
+      return "TypeAlias";
+    default:
+      return "Symbol";
+  }
+}
+
+function rangesOverlap(
+  left: { startLine: number; endLine: number },
+  right: { startLine: number; endLine: number },
+): boolean {
+  return left.startLine <= right.endLine && right.startLine <= left.endLine;
+}
+
 function createIncrementalStats(input: {
   mode: "index" | "update";
   plan: IncrementalPlan | undefined;
@@ -637,55 +671,45 @@ function createIncrementalStats(input: {
   };
 }
 
-function hashShort(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 10);
-}
-
-function rangesOverlap(
-  left: { startLine: number; endLine: number },
-  right: { startLine: number; endLine: number },
-): boolean {
-  return left.startLine <= right.endLine && right.startLine <= left.endLine;
-}
-
-function findContainingChunk<T extends { range?: { startLine: number; endLine: number } }>(
-  chunks: T[],
-  range: { startLine: number; endLine: number },
-): T | undefined {
-  return chunks
-    .filter((chunk) => chunk.range && chunk.range.startLine <= range.startLine && chunk.range.endLine >= range.endLine)
-    .sort((left, right) => {
-      const leftSize = (left.range?.endLine ?? 0) - (left.range?.startLine ?? 0);
-      const rightSize = (right.range?.endLine ?? 0) - (right.range?.startLine ?? 0);
-      return leftSize - rightSize;
-    })[0];
-}
-
-function addFallbackReferenceEdges(
-  graph: MutableGraph,
-  symbolNodesByName: Map<string, CodeNode[]>,
-  workspaceName: string,
-  repoName: string,
-): void {
-  for (const chunk of graph.chunks.values()) {
-    if (chunk.repo !== repoName || !chunk.file) continue;
-    for (const [symbolName, symbols] of symbolNodesByName) {
-      if (!chunk.content.includes(symbolName)) continue;
-      for (const symbol of symbols) {
-        if (symbol.file !== chunk.file) continue;
-        if (String(chunk.metadata.symbolId) === symbol.id) continue;
-        addEdge(
-          graph,
-          chunk.kind === "Test" ? "TESTS" : "REFERENCES",
-          chunk.id,
-          symbol.id,
-          workspaceName,
-          repoName,
-          ownerFileMetadata(repoName, chunk.file ?? "", "tree-sitter-reference-fallback"),
-        );
-      }
+function mergeMetadata(
+  current: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...current };
+  for (const [key, value] of Object.entries(next)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (key === "evidenceSources") {
+      merged.evidenceSources = mergeStringArrays(merged.evidenceSources, value);
+    } else {
+      merged[key] = value;
     }
   }
+  return merged;
+}
+
+function mergeEdgeMetadata(
+  current: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = mergeMetadata(current, next);
+  merged.evidenceSources = mergeStringArrays(current.evidenceSources, next.evidenceSources ?? next.origin);
+  if (current.roles || next.roles) {
+    merged.roles = mergeStringArrays(current.roles, next.roles);
+  }
+  return merged;
+}
+
+function mergeStringArrays(left: unknown, right: unknown): string[] {
+  return [...new Set([...toStringArray(left), ...toStringArray(right)])].sort();
+}
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  }
+  return typeof value === "string" && value.length > 0 ? [value] : [];
 }
 
 function addFileNode(
@@ -759,6 +783,11 @@ function addEdge(
     repo,
     metadata,
   };
+  const existing = graph.edges.get(edge.id);
+  if (existing) {
+    existing.metadata = mergeEdgeMetadata(existing.metadata, metadata);
+    return;
+  }
   graph.edges.set(edge.id, edge);
 }
 

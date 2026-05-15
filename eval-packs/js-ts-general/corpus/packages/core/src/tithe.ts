@@ -5,3 +5,11 @@ export function calculateGivingTotal(amounts: number[]): number {
 export function formatGivingReceipt(name: string, total: number): string {
   return `${name}:${calculateGivingTotal([total])}`;
 }
+
+export interface GivingEntry {
+  amount: number;
+}
+
+export type GivingSummary = {
+  total: number;
+};

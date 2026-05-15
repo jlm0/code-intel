@@ -46,7 +46,7 @@ describe("incremental changed-file reindexing", () => {
           unchanged: 5,
         },
         chunks: {
-          reused: 6,
+          reused: 8,
           embedded: 3,
         },
       });

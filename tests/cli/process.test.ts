@@ -153,7 +153,7 @@ describe("code-intel process behavior", () => {
           unchanged: 5,
         },
         chunks: {
-          reused: 6,
+          reused: 8,
           embedded: 3,
         },
       });

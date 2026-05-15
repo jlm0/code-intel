@@ -1,6 +1,6 @@
-import { GivingLedger } from "@fixture/core";
+import { GivingLedger, type GivingEntry, type GivingSummary } from "@fixture/core";
 
-export function useGivingSummary(entries: number[]) {
+export function useGivingSummary(entries: GivingEntry[]): GivingSummary {
   const ledger = new GivingLedger();
   return ledger.summarize(entries);
 }

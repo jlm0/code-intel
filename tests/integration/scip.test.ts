@@ -10,7 +10,7 @@ import { runScipTypescript } from "../../src/scip/runner.js";
 const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
 
 describe("SCIP integration", () => {
-  it("runs scip-typescript and ingests definitions and references", async () => {
+  it("runs scip-typescript and ingests role-aware occurrence facts", async () => {
     const tempPath = await mkdtemp(join(tmpdir(), "code-intel-scip-"));
     try {
       const outputPath = join(tempPath, "fixture.scip");
@@ -27,6 +27,35 @@ describe("SCIP integration", () => {
         "calculateGivingTotal",
       );
       expect(facts.references.some((reference) => reference.symbolName === "calculateGivingTotal")).toBe(true);
+      expect(facts.occurrences).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            symbolName: "calculateGivingTotal",
+            relativePath: "packages/core/src/ledger.ts",
+            roles: expect.arrayContaining(["ReadAccess"]),
+          }),
+          expect.objectContaining({
+            symbolName: "GivingSummary",
+            relativePath: "packages/ui/src/useGivingSummary.tsx",
+            roles: expect.arrayContaining(["ReadAccess"]),
+          }),
+          expect.objectContaining({
+            symbolName: "calculateGivingTotal",
+            relativePath: "packages/core/src/tithe.test.ts",
+            roles: expect.arrayContaining(["ReadAccess"]),
+            isTest: true,
+          }),
+        ]),
+      );
+      expect(facts.references).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            symbolName: "calculateGivingTotal",
+            relativePath: "packages/core/src/ledger.ts",
+            roles: expect.arrayContaining(["ReadAccess"]),
+          }),
+        ]),
+      );
     } finally {
       await rm(tempPath, { recursive: true, force: true });
     }

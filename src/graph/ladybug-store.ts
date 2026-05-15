@@ -147,14 +147,14 @@ export class LadybugGraphStore implements CodeGraphRepository {
       return this.relatedRows(`
         MATCH (node:CodeNode)-[edge:RELATES]->(seed:CodeNode)
         WHERE seed.id IN ${cypherValue(seedIds)} AND edge.kind = ${cypherValue(edgeKind)}
-        ${nodeReturnClause("node")}, edge.kind AS edgeKind
+        ${nodeReturnClause("node")}, edge.kind AS edgeKind, edge.metadata AS edgeMetadata
         LIMIT ${limit}
       `);
     }
     return this.relatedRows(`
       MATCH (seed:CodeNode)-[edge:RELATES]->(node:CodeNode)
       WHERE seed.id IN ${cypherValue(seedIds)} AND edge.kind = ${cypherValue(edgeKind)}
-      ${nodeReturnClause("node")}, edge.kind AS edgeKind
+      ${nodeReturnClause("node")}, edge.kind AS edgeKind, edge.metadata AS edgeMetadata
       LIMIT ${limit}
     `);
   }
@@ -166,13 +166,13 @@ export class LadybugGraphStore implements CodeGraphRepository {
     const outgoing = await this.relatedRows(`
       MATCH (current:CodeNode)-[edge:RELATES]->(node:CodeNode)
       WHERE current.id IN ${cypherValue(nodeIds)}
-      ${nodeReturnClause("node")}, edge.kind AS edgeKind
+      ${nodeReturnClause("node")}, edge.kind AS edgeKind, edge.metadata AS edgeMetadata
       LIMIT ${limit}
     `);
     const incoming = await this.relatedRows(`
       MATCH (node:CodeNode)-[edge:RELATES]->(current:CodeNode)
       WHERE current.id IN ${cypherValue(nodeIds)}
-      ${nodeReturnClause("node")}, edge.kind AS edgeKind
+      ${nodeReturnClause("node")}, edge.kind AS edgeKind, edge.metadata AS edgeMetadata
       LIMIT ${limit}
     `);
     return mergeRelatedRows(outgoing, incoming, limit);
@@ -433,6 +433,7 @@ export class LadybugGraphStore implements CodeGraphRepository {
     return rows.map((row) => ({
       node: rowToNode(row),
       edgeKind: CodeEdgeSchema.shape.kind.parse(row.edgeKind),
+      edgeMetadata: parseMetadata(row.edgeMetadata),
     }));
   }
 
@@ -649,11 +650,14 @@ function nodeReturnClause(alias: string, includeContent = false): string {
 
 function symbolRank(node: CodeNode, needle: string): number {
   const name = node.name?.toLowerCase() ?? "";
+  const scipBacked = node.metadata.sourcePriority === "canonical" || node.metadata.origin === "scip-typescript";
   if (node.id.toLowerCase() === needle) return 0;
-  if (name === needle) return 1;
-  if (node.kind === "Function" && name.includes(needle)) return 2;
-  if (name.startsWith(needle)) return 3;
-  return 4;
+  if (name === needle && scipBacked) return 1;
+  if (name === needle) return 2;
+  if (node.kind === "Function" && name.includes(needle) && scipBacked) return 3;
+  if (node.kind === "Function" && name.includes(needle)) return 4;
+  if (name.startsWith(needle)) return 5;
+  return 6;
 }
 
 function nodeValues(node: CodeNode, chunk?: CodeNode & { content: string; embedding: number[] }): Record<string, unknown> {

@@ -42,6 +42,117 @@
     "failureClassHint": "ranking"
   },
   {
+    "id": "rallly.create-poll-symbol",
+    "name": "Create poll compiler symbol",
+    "mode": "find-symbol",
+    "query": "createPoll",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/api-core/src/polls/mutations.ts",
+        "symbol": "createPoll",
+        "maxRank": 5
+      }
+    ],
+    "notExpected": [
+      {
+        "file": "packages/api-core/src/polls/mutations.ts",
+        "symbol": "CreatePollParams",
+        "maxRank": 1
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "rallly.delete-poll-symbol",
+    "name": "Delete poll compiler symbol",
+    "mode": "find-symbol",
+    "query": "deletePoll",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/api-core/src/polls/mutations.ts",
+        "symbol": "deletePoll",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "rallly.create-poll-route-reference",
+    "name": "Create poll route reference",
+    "mode": "references",
+    "query": "createPoll",
+    "limit": 30,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "rallly.delete-poll-route-reference",
+    "name": "Delete poll route reference",
+    "mode": "references",
+    "query": "deletePoll",
+    "limit": 30,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "rallly.prisma-database-reference",
+    "name": "Database client reference",
+    "mode": "references",
+    "query": "prisma",
+    "limit": 30,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 10
+      },
+      {
+        "file": "packages/api-core/src/polls/mutations.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "rallly.middleware-route-reference",
+    "name": "Middleware route reference",
+    "mode": "references",
+    "query": "spaceApiKeyAuth",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "apps/api/src/routes/polls.ts",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "rallly.private-api-test-route-reference",
+    "name": "Private API test route reference",
+    "mode": "references",
+    "query": "app",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "apps/web/src/app/api/private/[...route]/route.test.ts",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
     "id": "rallly.api-key-auth-middleware",
     "name": "API key auth middleware",
     "mode": "semantic",

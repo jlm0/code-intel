@@ -265,7 +265,7 @@ async function runEvalCase(
   const latencyMs = Math.round(performance.now() - start);
   const expected = testCase.expected.map((expectation) => evaluateExpectation(expectation, result.results));
   const notExpected = testCase.notExpected.map((expectation) => evaluateExpectation(expectation, result.results));
-  const status = expected.every(expectationPassed) && notExpected.every((expectation) => !expectation.found)
+  const status = expected.every(expectationPassed) && notExpected.every(notExpectationPassed)
     ? "pass"
     : "fail";
 
@@ -326,6 +326,13 @@ function expectationPassed(expectation: EvalExpectationResult): boolean {
     return false;
   }
   return !expectation.maxRank || (expectation.rank ?? Number.POSITIVE_INFINITY) <= expectation.maxRank;
+}
+
+function notExpectationPassed(expectation: EvalExpectationResult): boolean {
+  if (!expectation.found) {
+    return true;
+  }
+  return Boolean(expectation.maxRank && (expectation.rank ?? 0) > expectation.maxRank);
 }
 
 function resultMatchesExpectation(result: QueryResultItem, expectation: EvalExpectation): boolean {

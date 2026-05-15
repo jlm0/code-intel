@@ -1,10 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { resolveActiveGenerationPath } from "../../src/core/index-artifacts.js";
 import { runHealth } from "../../src/core/health.js";
+import { LadybugGraphStore } from "../../src/graph/ladybug-store.js";
 import { indexWorkspace } from "../../src/indexer/indexer.js";
 import { createQueryEngine } from "../../src/query/query-engine.js";
 
@@ -41,19 +43,156 @@ describe("index and query integration", () => {
         expect(symbol.results[0]).toMatchObject({
           kind: "Function",
           file: "packages/core/src/tithe.ts",
+          metadata: {
+            origin: "scip-typescript",
+            scipSymbol: expect.any(String),
+            astOrigin: "tree-sitter",
+          },
         });
+        const totalDefinitions = symbol.results.filter(
+          (result) =>
+            result.file === "packages/core/src/tithe.ts" &&
+            result.symbol?.name === "calculateGivingTotal",
+        );
+        expect(totalDefinitions).toHaveLength(1);
 
         const callers = await firstEngine.getCallers("calculateGivingTotal", { limit: 10 });
-        expect(callers.results.map((result) => result.file)).toContain(
-          "packages/core/src/ledger.ts",
+        expect(callers.results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              file: "packages/core/src/ledger.ts",
+              metadata: expect.objectContaining({
+                relationship: expect.objectContaining({
+                  kind: "CALLS",
+                  evidenceSources: expect.arrayContaining(["scip-typescript"]),
+                }),
+              }),
+            }),
+          ]),
         );
 
         const callees = await firstEngine.getCallees("summarize", { limit: 10 });
-        expect(callees.results.map((result) => result.file)).toContain(
-          "packages/core/src/tithe.ts",
+        expect(callees.results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              file: "packages/core/src/tithe.ts",
+              metadata: expect.objectContaining({
+                relationship: expect.objectContaining({
+                  kind: "CALLS",
+                  evidenceSources: expect.arrayContaining(["scip-typescript"]),
+                }),
+              }),
+            }),
+          ]),
+        );
+
+        const typeReferences = await firstEngine.getReferences("GivingSummary", { limit: 20 });
+        expect(typeReferences.results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              file: "packages/ui/src/useGivingSummary.tsx",
+              metadata: expect.objectContaining({
+                relationship: expect.objectContaining({
+                  kind: "REFERENCES",
+                  roles: expect.arrayContaining(["Import"]),
+                  evidenceSources: expect.arrayContaining(["scip-typescript"]),
+                }),
+              }),
+            }),
+          ]),
         );
       } finally {
         await firstEngine.close();
+      }
+
+      const generationPath = await resolveActiveGenerationPath(indexPath);
+      expect(generationPath).toBeDefined();
+      const scipFacts = JSON.parse(
+        await readFile(join(generationPath!, "facts", "scip.json"), "utf8"),
+      ) as {
+        factsSchemaVersion: string;
+        repos: Array<{
+          name: string;
+          definitions: Array<{ name: string; symbol: string }>;
+          occurrences: Array<{ symbolName: string; relativePath: string; roles: string[] }>;
+        }>;
+      };
+      expect(scipFacts).toMatchObject({
+        factsSchemaVersion: "code-intel.scip-facts.v1",
+        repos: [
+          expect.objectContaining({
+            name: "js-ts-workspace",
+          }),
+        ],
+      });
+      expect(scipFacts.repos[0]?.occurrences).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            symbolName: "calculateGivingTotal",
+            relativePath: "packages/core/src/ledger.ts",
+            roles: expect.arrayContaining(["ReadAccess"]),
+          }),
+        ]),
+      );
+
+      const store = new LadybugGraphStore(indexPath);
+      try {
+        const nodes = await store.getNodes();
+        const edges = await store.getEdges();
+        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const symbolId = nodes.find(
+          (node) =>
+            node.name === "calculateGivingTotal" &&
+            node.file === "packages/core/src/tithe.ts" &&
+            node.metadata.scipSymbol,
+        )?.id;
+        expect(symbolId).toBeDefined();
+        const scipEdgesToTotal = edges.filter(
+          (edge) =>
+            edge.toId === symbolId &&
+            Array.isArray(edge.metadata.evidenceSources) &&
+            edge.metadata.evidenceSources.includes("scip-typescript"),
+        );
+        expect(scipEdgesToTotal).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "IMPORTS",
+              fromId: expect.stringContaining("packages/core/src/ledger.ts"),
+            }),
+            expect.objectContaining({
+              kind: "EXPORTS",
+              fromId: expect.stringContaining("packages/core/src/index.ts"),
+            }),
+            expect.objectContaining({
+              kind: "REFERENCES",
+              fromId: expect.stringContaining("packages/core/src/tithe.test.ts"),
+            }),
+            expect.objectContaining({
+              kind: "CALLS",
+              fromId: expect.stringContaining("packages/core/src/ledger.ts"),
+            }),
+            expect.objectContaining({
+              kind: "MENTIONS",
+              fromId: expect.stringContaining("packages/core/src/ledger.ts"),
+            }),
+            expect.objectContaining({
+              kind: "TESTS",
+              fromId: expect.stringContaining("packages/core/src/tithe.test.ts"),
+            }),
+          ]),
+        );
+        expect(
+          scipEdgesToTotal
+            .filter((edge) => edge.kind === "CALLS")
+            .flatMap((edge) => edge.metadata.evidenceSources as string[]),
+        ).not.toContain("tree-sitter-call");
+        expect(
+          scipEdgesToTotal
+            .filter((edge) => edge.kind === "TESTS")
+            .map((edge) => nodeById.get(edge.fromId)?.file),
+        ).toContain("packages/core/src/tithe.test.ts");
+      } finally {
+        await store.close();
       }
 
       const secondEngine = createQueryEngine({ indexPath });

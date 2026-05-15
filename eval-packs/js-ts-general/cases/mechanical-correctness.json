@@ -45,6 +45,26 @@
     "failureClassHint": "scip"
   },
   {
+    "id": "synthetic.type-import-reference",
+    "name": "Type import reference",
+    "mode": "references",
+    "query": "GivingSummary",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/ui/src/useGivingSummary.tsx",
+        "symbol": "useGivingSummary",
+        "maxRank": 10
+      },
+      {
+        "file": "packages/core/src/ledger.ts",
+        "symbol": "summarize",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
     "id": "synthetic.react-hook",
     "name": "React hook symbol",
     "mode": "find-symbol",
@@ -88,6 +108,21 @@
       }
     ],
     "failureClassHint": "graph"
+  },
+  {
+    "id": "synthetic.method-callee-relationship",
+    "name": "Class method callee relationship",
+    "mode": "callees",
+    "query": "summarize",
+    "limit": 20,
+    "expected": [
+      {
+        "file": "packages/core/src/tithe.ts",
+        "symbol": "calculateGivingTotal",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "scip"
   },
   {
     "id": "synthetic.test-relationship",

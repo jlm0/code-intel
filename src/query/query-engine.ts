@@ -146,7 +146,14 @@ export class QueryEngine {
     return parseQueryResult({
       schemaVersion,
       query: symbol,
-      results: rows.map((row) => nodeToResult(row.node, [`graph_${signal}`])),
+      results: rows.map((row) =>
+        nodeToResult(row.node, [`graph_${signal}`], {
+          metadata: {
+            ...sanitizeMetadata(row.node),
+            relationship: relationshipMetadata(edgeKind, row.edgeMetadata),
+          },
+        }),
+      ),
     });
   }
 }
@@ -187,6 +194,18 @@ function sanitizeMetadata(node: CodeNode): Record<string, unknown> {
 
 function truncateSource(content: string): string {
   return truncateUtf8Bytes(content, 16_000);
+}
+
+function relationshipMetadata(kind: CodeEdge["kind"], metadata: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind,
+    ...metadata,
+    evidenceSources: Array.isArray(metadata.evidenceSources)
+      ? metadata.evidenceSources
+      : typeof metadata.origin === "string"
+        ? [metadata.origin]
+        : [],
+  };
 }
 
 async function resolveEmbeddingProviderForIndex(

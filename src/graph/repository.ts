@@ -7,6 +7,7 @@ export interface StoredCodeNode extends CodeNode {
 export interface RelatedCodeNode {
   node: StoredCodeNode;
   edgeKind: CodeEdge["kind"];
+  edgeMetadata: Record<string, unknown>;
 }
 
 export interface SemanticCodeNode {
