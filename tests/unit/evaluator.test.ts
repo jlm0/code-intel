@@ -14,9 +14,21 @@ describe("runEvalSuite", () => {
     } as Parameters<typeof runEvalSuite>[0] & { suite: string });
 
     expect(report.status).toBe("pass");
+    expect(report.blockingStatus).toBe("pass");
+    expect(report.qualityStatus).toBe("pass");
     expect(report.suite).toMatchObject({
       id: "js-ts-general",
       kind: "synthetic",
+    });
+    expect(report.summary).toMatchObject({
+      blockingStatus: "pass",
+      qualityStatus: "pass",
+      gateStatuses: {
+        required: {
+          blocking: true,
+          resultStatus: "pass",
+        },
+      },
     });
     expect(report.corpus).toMatchObject({
       type: "local",
@@ -26,6 +38,11 @@ describe("runEvalSuite", () => {
         expect.objectContaining({
           id: "synthetic.semantic-concept",
           mode: "semantic",
+          gate: expect.objectContaining({
+            status: "required",
+            capability: "semantic-concept-retrieval",
+            layer: "ranking",
+          }),
           failureClass: undefined,
           expected: expect.arrayContaining([
             expect.objectContaining({

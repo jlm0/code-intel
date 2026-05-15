@@ -5,6 +5,12 @@
     "mode": "find-symbol",
     "query": "calculateGivingTotal",
     "limit": 10,
+    "gate": {
+      "id": "synthetic.scip-symbols",
+      "status": "required",
+      "capability": "symbol-definition",
+      "layer": "SCIP"
+    },
     "expected": [
       {
         "file": "packages/core/src/tithe.ts",
@@ -20,6 +26,12 @@
     "mode": "find-symbol",
     "query": "formatGivingReceipt",
     "limit": 10,
+    "gate": {
+      "id": "synthetic.fusion-exports",
+      "status": "required",
+      "capability": "re-export/canonical-symbol-resolution",
+      "layer": "fusion"
+    },
     "expected": [
       {
         "file": "packages/core/src/tithe.ts",
@@ -35,6 +47,12 @@
     "mode": "references",
     "query": "GivingLedger",
     "limit": 20,
+    "gate": {
+      "id": "synthetic.scip.path-alias-references",
+      "status": "required",
+      "capability": "package-boundary-imports",
+      "layer": "SCIP"
+    },
     "expected": [
       {
         "file": "packages/ui/src/useGivingSummary.tsx",
@@ -50,6 +68,12 @@
     "mode": "references",
     "query": "GivingSummary",
     "limit": 20,
+    "gate": {
+      "id": "synthetic.scip.type-import-references",
+      "status": "required",
+      "capability": "type-import-references",
+      "layer": "SCIP"
+    },
     "expected": [
       {
         "file": "packages/ui/src/useGivingSummary.tsx",
@@ -70,6 +94,12 @@
     "mode": "find-symbol",
     "query": "useGivingSummary",
     "limit": 10,
+    "gate": {
+      "id": "synthetic.ast.function-declarations",
+      "status": "required",
+      "capability": "function-and-component-declarations",
+      "layer": "AST"
+    },
     "expected": [
       {
         "file": "packages/ui/src/useGivingSummary.tsx",
@@ -85,6 +115,12 @@
     "mode": "find-symbol",
     "query": "summarize",
     "limit": 10,
+    "gate": {
+      "id": "synthetic.ast.class-method-declarations",
+      "status": "required",
+      "capability": "class-method-declarations",
+      "layer": "AST"
+    },
     "expected": [
       {
         "file": "packages/core/src/ledger.ts",
@@ -100,6 +136,12 @@
     "mode": "callers",
     "query": "calculateGivingTotal",
     "limit": 20,
+    "gate": {
+      "id": "synthetic.graph.caller-relationships",
+      "status": "required",
+      "capability": "caller-relationships",
+      "layer": "graph"
+    },
     "expected": [
       {
         "file": "packages/core/src/ledger.ts",
@@ -115,6 +157,12 @@
     "mode": "callees",
     "query": "summarize",
     "limit": 20,
+    "gate": {
+      "id": "synthetic.graph.callee-relationships",
+      "status": "required",
+      "capability": "callee-relationships",
+      "layer": "graph"
+    },
     "expected": [
       {
         "file": "packages/core/src/tithe.ts",
@@ -130,6 +178,12 @@
     "mode": "references",
     "query": "calculateGivingTotal",
     "limit": 20,
+    "gate": {
+      "id": "synthetic.graph.test-relationships",
+      "status": "required",
+      "capability": "test-to-implementation",
+      "layer": "graph"
+    },
     "expected": [
       {
         "file": "packages/core/src/tithe.test.ts",
@@ -144,6 +198,12 @@
     "mode": "semantic",
     "query": "giving receipt summary",
     "limit": 10,
+    "gate": {
+      "id": "synthetic.semantic-ranking",
+      "status": "required",
+      "capability": "semantic-concept-retrieval",
+      "layer": "ranking"
+    },
     "expected": [
       {
         "file": "packages/core/src/tithe.ts",
@@ -158,6 +218,12 @@
     "mode": "callers",
     "query": "calculateGivingTotal",
     "limit": 20,
+    "gate": {
+      "id": "synthetic.false-positive-guards",
+      "status": "required",
+      "capability": "false-positive-guard",
+      "layer": "graph"
+    },
     "expected": [
       {
         "file": "packages/core/src/ledger.ts",

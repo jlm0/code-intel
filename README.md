@@ -46,3 +46,11 @@ node dist/cli/main.js eval --suite oss-rallly-app-flow --fetch --json
 ```
 
 Use `--eval-cache-path /path/to/cache` to control where on-demand corpora are stored. Rallly is meant for real-world retrieval quality validation across frontend, API, package, database, middleware, and test paths; it is not a replacement for the synthetic regression gate.
+
+Eval cases include gate metadata:
+
+- `required` gates are blocking. Any required failure makes `status` and `blockingStatus` fail.
+- `target` gates are non-blocking development targets for known next-layer work.
+- `scoreboard` gates are non-blocking trend metrics.
+
+JSON reports include `qualityStatus` plus summaries by gate status, gate, capability, expected-rank coverage, and failure class. This lets the Rallly pack track app-flow and ranking gaps without hiding the current AST, SCIP, fusion, and graph regression signal.

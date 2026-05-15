@@ -3,6 +3,12 @@
     "id": "rallly.ast.api-route",
     "name": "API route AST facts",
     "file": "apps/api/src/routes/polls.ts",
+    "gate": {
+      "id": "rallly.required.ast-route-to-mutation",
+      "status": "required",
+      "capability": "route-to-mutation",
+      "layer": "AST"
+    },
     "expected": {
       "imports": [
         {
@@ -42,6 +48,12 @@
     "id": "rallly.ast.api-mutation",
     "name": "API mutation AST facts",
     "file": "packages/api-core/src/polls/mutations.ts",
+    "gate": {
+      "id": "rallly.required.ast-mutation-to-database",
+      "status": "required",
+      "capability": "mutation-to-database",
+      "layer": "AST"
+    },
     "expected": {
       "imports": [
         {
@@ -86,6 +98,12 @@
     "id": "rallly.ast.database-client",
     "name": "Database client AST facts",
     "file": "packages/database/src/client.ts",
+    "gate": {
+      "id": "rallly.required.ast-mutation-to-database",
+      "status": "required",
+      "capability": "mutation-to-database",
+      "layer": "AST"
+    },
     "expected": {
       "exports": [
         {
@@ -121,6 +139,12 @@
     "id": "rallly.ast.web-ui-loader",
     "name": "Web UI loader AST facts",
     "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page-loader.tsx",
+    "gate": {
+      "id": "rallly.required.ast-ui-to-data-api",
+      "status": "required",
+      "capability": "UI-to-data/API",
+      "layer": "AST"
+    },
     "expected": {
       "imports": [
         {
@@ -157,6 +181,12 @@
     "id": "rallly.ast.middleware",
     "name": "Middleware AST facts",
     "file": "apps/api/src/middleware/api-key.ts",
+    "gate": {
+      "id": "rallly.required.ast-middleware-to-route",
+      "status": "required",
+      "capability": "middleware-to-route",
+      "layer": "AST"
+    },
     "expected": {
       "exports": [
         {
@@ -188,6 +218,12 @@
     "id": "rallly.ast.private-api-test",
     "name": "Private API test AST facts",
     "file": "apps/web/src/app/api/private/[...route]/route.test.ts",
+    "gate": {
+      "id": "rallly.required.ast-test-to-implementation",
+      "status": "required",
+      "capability": "test-to-implementation",
+      "layer": "AST"
+    },
     "expected": {
       "imports": [
         {

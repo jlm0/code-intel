@@ -5,6 +5,12 @@
     "mode": "semantic",
     "query": "create poll api route validates input calls createPoll mutation and writes database record",
     "limit": 20,
+    "gate": {
+      "id": "rallly.target.full-app-flow",
+      "status": "target",
+      "capability": "route-to-mutation",
+      "layer": "app-flow"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",
@@ -28,6 +34,12 @@
     "mode": "semantic",
     "query": "delete poll route removes or updates a poll through api core mutation",
     "limit": 20,
+    "gate": {
+      "id": "rallly.target.full-app-flow",
+      "status": "target",
+      "capability": "route-to-mutation",
+      "layer": "app-flow"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",
@@ -47,6 +59,12 @@
     "mode": "find-symbol",
     "query": "createPoll",
     "limit": 20,
+    "gate": {
+      "id": "rallly.required.canonical-symbols",
+      "status": "required",
+      "capability": "re-export/canonical-symbol-resolution",
+      "layer": "SCIP"
+    },
     "expected": [
       {
         "file": "packages/api-core/src/polls/mutations.ts",
@@ -69,6 +87,12 @@
     "mode": "find-symbol",
     "query": "deletePoll",
     "limit": 20,
+    "gate": {
+      "id": "rallly.required.canonical-symbols",
+      "status": "required",
+      "capability": "re-export/canonical-symbol-resolution",
+      "layer": "SCIP"
+    },
     "expected": [
       {
         "file": "packages/api-core/src/polls/mutations.ts",
@@ -84,6 +108,12 @@
     "mode": "references",
     "query": "createPoll",
     "limit": 30,
+    "gate": {
+      "id": "rallly.required.package-boundary-route-to-mutation",
+      "status": "required",
+      "capability": "package-boundary route-to-mutation",
+      "layer": "fusion"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",
@@ -98,6 +128,12 @@
     "mode": "references",
     "query": "deletePoll",
     "limit": 30,
+    "gate": {
+      "id": "rallly.required.package-boundary-route-to-mutation",
+      "status": "required",
+      "capability": "package-boundary route-to-mutation",
+      "layer": "fusion"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",
@@ -112,6 +148,12 @@
     "mode": "references",
     "query": "prisma",
     "limit": 30,
+    "gate": {
+      "id": "rallly.required.mutation-to-database",
+      "status": "required",
+      "capability": "mutation-to-database",
+      "layer": "graph"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",
@@ -130,6 +172,12 @@
     "mode": "references",
     "query": "spaceApiKeyAuth",
     "limit": 20,
+    "gate": {
+      "id": "rallly.required.middleware-to-route",
+      "status": "required",
+      "capability": "middleware-to-route",
+      "layer": "graph"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",
@@ -144,6 +192,12 @@
     "mode": "references",
     "query": "app",
     "limit": 20,
+    "gate": {
+      "id": "rallly.required.test-to-implementation",
+      "status": "required",
+      "capability": "test-to-implementation",
+      "layer": "graph"
+    },
     "expected": [
       {
         "file": "apps/web/src/app/api/private/[...route]/route.test.ts",
@@ -158,6 +212,12 @@
     "mode": "semantic",
     "query": "space api key authentication middleware protects api routes",
     "limit": 20,
+    "gate": {
+      "id": "rallly.target.middleware-app-flow",
+      "status": "target",
+      "capability": "middleware-to-route",
+      "layer": "ranking"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",
@@ -176,6 +236,12 @@
     "mode": "semantic",
     "query": "poll page loader renders admin page duplicate dialog and dashboard poll workflow",
     "limit": 20,
+    "gate": {
+      "id": "rallly.target.ui-to-data-api",
+      "status": "target",
+      "capability": "UI-to-data/API",
+      "layer": "ranking"
+    },
     "expected": [
       {
         "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page-loader.tsx",
@@ -198,6 +264,12 @@
     "mode": "semantic",
     "query": "private api route tests exercise web app api handler",
     "limit": 20,
+    "gate": {
+      "id": "rallly.target.test-app-flow",
+      "status": "target",
+      "capability": "test-to-implementation",
+      "layer": "ranking"
+    },
     "expected": [
       {
         "file": "apps/web/src/app/api/private/[...route]/route.ts",
@@ -211,11 +283,42 @@
     "failureClassHint": "ranking"
   },
   {
+    "id": "rallly.target.transitive-route-to-database",
+    "name": "Transitive route to database graph traversal",
+    "mode": "callees",
+    "query": "polls",
+    "limit": 30,
+    "gate": {
+      "id": "rallly.target.graph-traversal",
+      "status": "target",
+      "capability": "route-to-mutation-to-database",
+      "layer": "graph"
+    },
+    "expected": [
+      {
+        "file": "packages/api-core/src/polls/mutations.ts",
+        "symbol": "createPoll",
+        "maxRank": 10
+      },
+      {
+        "file": "packages/database/src/client.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
     "id": "rallly.false-positive-guard",
     "name": "Create poll flow should not rank unrelated billing first",
     "mode": "semantic",
     "query": "create poll api route validates input calls createPoll mutation and writes database record",
     "limit": 10,
+    "gate": {
+      "id": "rallly.target.false-positive-guards",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "ranking"
+    },
     "expected": [
       {
         "file": "apps/api/src/routes/polls.ts",

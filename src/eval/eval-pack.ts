@@ -9,6 +9,12 @@ import { z } from "zod";
 const execFileAsync = promisify(execFile);
 const evalPackSchemaVersion = "code-intel.eval-pack.v1";
 const defaultSuiteId = "js-ts-general";
+const defaultEvalGate = {
+  id: "default.required",
+  status: "required" as const,
+  capability: "unspecified",
+  layer: "unspecified",
+};
 
 const EvalCorpusSchema = z.discriminatedUnion("type", [
   z.object({
@@ -38,6 +44,14 @@ const EvalPackSchema = z.object({
   astCaseFiles: z.array(z.string().min(1)).default([]),
 });
 
+const EvalGateMetadataSchema = z.object({
+  id: z.string().min(1),
+  status: z.enum(["required", "target", "scoreboard"]),
+  capability: z.string().min(1),
+  layer: z.string().min(1),
+  description: z.string().optional(),
+});
+
 const EvalExpectationSchema = z.object({
   file: z.string().min(1),
   symbol: z.string().optional(),
@@ -51,9 +65,20 @@ const EvalCaseSchema = z.object({
   mode: z.enum(["find-symbol", "references", "callers", "callees", "semantic"]),
   query: z.string().min(1),
   limit: z.number().int().min(1).max(50).default(10),
+  gate: EvalGateMetadataSchema.default(defaultEvalGate),
   expected: z.array(EvalExpectationSchema).min(1),
   notExpected: z.array(EvalExpectationSchema).default([]),
-  failureClassHint: z.enum(["discovery", "chunking", "scip", "graph", "embedding", "query", "ranking"]).optional(),
+  failureClassHint: z.enum([
+    "discovery",
+    "chunking",
+    "scip",
+    "fusion",
+    "graph",
+    "embedding",
+    "query",
+    "ranking",
+    "app-flow",
+  ]).optional(),
 });
 
 const AstFactExpectationSchema = z.record(z.string(), z.unknown());
@@ -62,6 +87,7 @@ const AstEvalCaseSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   file: z.string().min(1),
+  gate: EvalGateMetadataSchema.default(defaultEvalGate),
   expected: z.object({
     imports: z.array(AstFactExpectationSchema).default([]),
     exports: z.array(AstFactExpectationSchema).default([]),
@@ -76,6 +102,8 @@ const AstEvalCaseSchema = z.object({
 
 export type EvalCorpus = z.infer<typeof EvalCorpusSchema>;
 export type EvalPack = z.infer<typeof EvalPackSchema>;
+export type EvalGateMetadata = z.infer<typeof EvalGateMetadataSchema>;
+export type EvalGateStatus = EvalGateMetadata["status"];
 export type EvalCase = z.infer<typeof EvalCaseSchema>;
 export type EvalExpectation = z.infer<typeof EvalExpectationSchema>;
 export type EvalFailureClass = NonNullable<EvalCase["failureClassHint"]> | "unknown";

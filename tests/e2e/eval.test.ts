@@ -13,6 +13,18 @@ describe("fixture eval", () => {
     const payload = JSON.parse(result.stdout);
 
     expect(payload.status).toBe("pass");
+    expect(payload.blockingStatus).toBe("pass");
+    expect(payload.qualityStatus).toBe("pass");
+    expect(payload.summary).toMatchObject({
+      blockingStatus: "pass",
+      qualityStatus: "pass",
+      gateStatuses: {
+        required: {
+          blocking: true,
+          resultStatus: "pass",
+        },
+      },
+    });
     expect(payload.suite).toMatchObject({
       id: "js-ts-general",
       kind: "synthetic",
@@ -45,6 +57,18 @@ describe("fixture eval", () => {
     const payload = JSON.parse(result.stdout);
 
     expect(payload.status).toBe("pass");
+    expect(payload.summary.gates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "synthetic.false-positive-guards",
+          gateStatus: "required",
+          capability: "false-positive-guard",
+          layer: "graph",
+          blocking: true,
+          resultStatus: "pass",
+        }),
+      ]),
+    );
     expect(payload.suite).toMatchObject({
       id: "js-ts-general",
       name: "JS/TS General Synthetic Fixture",
