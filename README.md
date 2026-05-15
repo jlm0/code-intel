@@ -22,6 +22,8 @@ If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and ot
 
 The Tree-sitter layer exposes `extractSourceFileFacts()` for rich JS/TS structure and keeps `chunkSourceFile()` as the compatibility wrapper. File facts include imports, exports, declarations, calls, member access paths, ownership, tests, callbacks, stable ranges, source hashes, and containing chunk provenance. Import and export facts are also written as graph nodes with owning-file edges.
 
+The fusion layer links Tree-sitter structural facts with SCIP compiler facts into resolved module and symbol evidence. It writes generation-local `facts/resolution.json`, resolves relative imports, path aliases, package exports, default/named/namespace imports, re-exports, dynamic imports, and CommonJS where statically knowable, and marks unresolved cases explicitly. Semantic search uses hybrid ranking over vector, symbol, path, file-kind, and graph-neighbor signals.
+
 The default embedding provider is local Jina through Transformers.js with `jinaai/jina-embeddings-v2-base-code`. Use `--embedding-provider hash` only when you need the deterministic fast fallback for tests, offline diagnostics, or comparison runs:
 
 ```bash
@@ -50,7 +52,7 @@ Use `--eval-cache-path /path/to/cache` to control where on-demand corpora are st
 Eval cases include gate metadata:
 
 - `required` gates are blocking. Any required failure makes `status` and `blockingStatus` fail.
-- `target` gates are non-blocking development targets for known next-layer work.
+- `target` gates are non-blocking development targets for quality work.
 - `scoreboard` gates are non-blocking trend metrics.
 
 JSON reports include `qualityStatus` plus summaries by gate status, gate, capability, expected-rank coverage, and failure class. This lets the Rallly pack track app-flow and ranking gaps without hiding the current AST, SCIP, fusion, and graph regression signal.

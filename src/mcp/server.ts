@@ -227,10 +227,7 @@ export async function startMcpServer(options: RuntimeOptions): Promise<void> {
     try {
       return await callback(queryEngine);
     } finally {
-      queryEngineCloseTimer = setTimeout(() => {
-        void closeQueryEngine();
-      }, 1_000);
-      queryEngineCloseTimer.unref?.();
+      await closeQueryEngine();
     }
   }
 

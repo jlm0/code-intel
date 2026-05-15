@@ -3,7 +3,8 @@
     "baseUrl": ".",
     "paths": {
       "@fixture/core": ["packages/core/src/index.ts"],
-      "@fixture/core/*": ["packages/core/src/*"]
+      "@fixture/core/*": ["packages/core/src/*"],
+      "@fixture/alias/*": ["packages/core/src/*"]
     },
     "jsx": "react-jsx",
     "module": "ESNext",

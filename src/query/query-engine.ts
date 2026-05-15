@@ -14,6 +14,7 @@ import {
   createEmbeddingProvider,
   type EmbeddingProvider,
 } from "../vectors/embedding.js";
+import { rankHybridSemanticRows } from "./semantic-ranking.js";
 
 export interface QueryEngineOptions {
   indexPath: string;
@@ -109,17 +110,29 @@ export class QueryEngine {
 
   async semanticSearch(query: string, options: SemanticQueryOptions): Promise<QueryResult> {
     const provider = await this.embeddingProvider;
-    const rows = await this.store.semanticSearch(await provider.embed(query), options.limit, {
+    const vectorRows = await this.store.semanticSearch(await provider.embed(query), Math.max(options.limit * 5, 50), {
       repo: options.repo,
       packageName: options.packageName,
       fileKind: options.fileKind,
       symbolKind: options.symbolKind,
     });
+    const rows = await rankHybridSemanticRows({
+      store: this.store,
+      query,
+      vectorRows,
+      limit: options.limit,
+      filters: {
+        repo: options.repo,
+        packageName: options.packageName,
+        fileKind: options.fileKind,
+        symbolKind: options.symbolKind,
+      },
+    });
     return parseQueryResult({
       schemaVersion,
       query,
       results: rows.map((row) =>
-        nodeToResult(row.node, ["vector_similarity"], {
+        nodeToResult(row.node, row.signals, {
           score: Math.max(0, 1 - row.distance),
         }),
       ),
@@ -156,6 +169,7 @@ export class QueryEngine {
       ),
     });
   }
+
 }
 
 function parseQueryResult(result: QueryResult): QueryResult {

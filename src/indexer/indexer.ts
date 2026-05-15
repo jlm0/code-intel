@@ -28,6 +28,13 @@ import {
   type IndexFacts,
 } from "./fact-cache.js";
 import { prepareFileFacts } from "./file-facts.js";
+import { applyResolvedModuleGraphFacts } from "./module-resolution-graph.js";
+import {
+  buildRepoResolvedModuleFacts,
+  resolvedFactsSchemaVersion,
+  writeResolvedModuleFacts,
+  type RepoResolvedModuleFacts,
+} from "./module-resolution.js";
 import { addTreeSitterFallbackRelationships, applyScipGraphFacts } from "./scip-fusion.js";
 import { fingerprintKey, type IncrementalPlan } from "./update-planner.js";
 
@@ -112,6 +119,7 @@ async function buildIndexWorkspace(
   };
   const health: IndexManifest["health"] = [];
   const scipFactsByRepo: RepoScipFacts[] = [];
+  const resolvedFactsByRepo: RepoResolvedModuleFacts[] = [];
   const workspaceNode = addNode(graph, {
     id: createStableId({
       kind: "workspace",
@@ -324,6 +332,7 @@ async function buildIndexWorkspace(
       outputPath: scipOutputPath,
       inferTsconfig: true,
     });
+    let scipSymbolNodes = new Map<string, CodeNode>();
     if (scipRun.ok) {
       const facts = await ingestScipIndex(scipOutputPath);
       scipFactsByRepo.push({
@@ -331,7 +340,7 @@ async function buildIndexWorkspace(
         outputPath: scipOutputPath,
         ...facts,
       });
-      applyScipGraphFacts({
+      const fusion = applyScipGraphFacts({
         facts,
         workspaceName: workspace.workspaceName,
         repo,
@@ -343,6 +352,7 @@ async function buildIndexWorkspace(
         addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
           addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
       });
+      scipSymbolNodes = fusion.scipSymbolNodes;
       health.push({
         name: `scip:${repo.name}`,
         status: "pass",
@@ -373,6 +383,25 @@ async function buildIndexWorkspace(
         },
       });
     }
+    const resolvedModuleFacts = await buildRepoResolvedModuleFacts({
+      repo,
+      fileFactsByRelativePath,
+      astSymbolsByFile,
+      scipSymbolNodes,
+    });
+    resolvedFactsByRepo.push(resolvedModuleFacts);
+    applyResolvedModuleGraphFacts({
+      workspaceName: workspace.workspaceName,
+      repo,
+      facts: resolvedModuleFacts,
+      fileNodes,
+      packageNodes,
+      fileChunks,
+      astSymbolsByFile,
+      fileFactsByRelativePath,
+      addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
+        addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
+    });
   }
 
   const embedStats = await embedGraphChunks(graph.chunks, embeddingProvider, fileFactPlan.embeddingCache);
@@ -437,6 +466,13 @@ async function buildIndexWorkspace(
     workspace: workspace.workspaceName,
     generatedAt,
     repos: scipFactsByRepo,
+  });
+  await writeResolvedModuleFacts(generation.generationPath, {
+    schemaVersion,
+    factsSchemaVersion: resolvedFactsSchemaVersion,
+    workspace: workspace.workspaceName,
+    generatedAt,
+    repos: resolvedFactsByRepo,
   });
   await store.publishGeneration(generation.generationId);
   await writeJsonAtomically(join(input.indexPath, "manifest.json"), manifest);

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { dirname, join as joinPath, normalize } from "node:path/posix";
 
 import { createStableId } from "../core/ids.js";
 import type { CodeEdge, CodeNode, IndexManifest } from "../schema/schemas.js";
@@ -27,6 +26,10 @@ export interface ScipFusionInput {
   addEdge: AddEdge;
 }
 
+export interface ScipFusionResult {
+  scipSymbolNodes: Map<string, CodeNode>;
+}
+
 export interface TreeSitterFallbackInput {
   graph: {
     chunks: Map<string, CodeNode & { content: string }>;
@@ -48,7 +51,7 @@ type AddEdge = (
   metadata?: Record<string, unknown>,
 ) => void;
 
-export function applyScipGraphFacts(input: ScipFusionInput): void {
+export function applyScipGraphFacts(input: ScipFusionInput): ScipFusionResult {
   const scipSymbolNodes = new Map<string, CodeNode>();
   for (const definition of input.facts.definitions) {
     const fileNode = input.fileNodes.get(definition.relativePath);
@@ -148,16 +151,7 @@ export function applyScipGraphFacts(input: ScipFusionInput): void {
     references: input.facts.references,
     addEdge: input.addEdge,
   });
-  addAstImportResolutionEdges({
-    workspaceName: input.workspaceName,
-    repoName: input.repo.name,
-    fileNodes: input.fileNodes,
-    fileChunks: input.fileChunks,
-    fileFactsByRelativePath: input.fileFactsByRelativePath,
-    scipSymbolNodes,
-    astSymbolsByFile: input.astSymbolsByFile,
-    addEdge: input.addEdge,
-  });
+  return { scipSymbolNodes };
 }
 
 export function addTreeSitterFallbackRelationships(input: TreeSitterFallbackInput): IndexManifest["health"] {
@@ -259,99 +253,6 @@ function addFallbackReferenceEdges(input: TreeSitterFallbackInput): void {
   }
 }
 
-function addAstImportResolutionEdges(input: {
-  workspaceName: string;
-  repoName: string;
-  fileNodes: Map<string, CodeNode>;
-  fileChunks: Map<string, Array<CodeNode & { sourceCalls: string[] }>>;
-  fileFactsByRelativePath: Map<string, FileFact>;
-  scipSymbolNodes: Map<string, CodeNode>;
-  astSymbolsByFile: Map<string, CodeNode[]>;
-  addEdge: AddEdge;
-}): void {
-  const symbolsByName = groupBy(importResolutionCandidates(input.scipSymbolNodes, input.astSymbolsByFile), (symbol) =>
-    symbol.name ?? "",
-  );
-  for (const [relativePath, fileFact] of input.fileFactsByRelativePath) {
-    const fileNode = input.fileNodes.get(relativePath);
-    if (!fileNode) continue;
-    for (const importFact of fileFact.imports) {
-      const importedName = importFact.importedName === "default"
-        ? importFact.localName
-        : importFact.importedName ?? importFact.localName;
-      if (!importedName || importFact.importKind === "side-effect" || importFact.isNamespace) {
-        continue;
-      }
-      const target = (symbolsByName.get(importedName) ?? []).find((symbol) =>
-        symbol.name === importedName &&
-        symbol.file !== relativePath &&
-        candidateMatchesModuleSpecifier(symbol, importFact.moduleSpecifier, relativePath)
-      );
-      if (!target) {
-        continue;
-      }
-      const metadata = astImportResolutionMetadata(input.repoName, relativePath, importFact, target);
-      input.addEdge("IMPORTS", fileNode.id, target.id, input.workspaceName, input.repoName, metadata);
-      input.addEdge("REFERENCES", fileNode.id, target.id, input.workspaceName, input.repoName, metadata);
-      for (const chunk of input.fileChunks.get(relativePath) ?? []) {
-        if (!chunk.range) continue;
-        const callsImportedSymbol = fileFact.calls.some((call) =>
-          rangeContains(chunk.range!, call.range) &&
-          (call.name === importFact.localName || call.name === importedName || call.propertyName === importedName)
-        );
-        if (!callsImportedSymbol) {
-          continue;
-        }
-        input.addEdge("REFERENCES", chunk.id, target.id, input.workspaceName, input.repoName, metadata);
-        input.addEdge("MENTIONS", chunk.id, target.id, input.workspaceName, input.repoName, metadata);
-        input.addEdge("CALLS", chunk.id, target.id, input.workspaceName, input.repoName, metadata);
-        const sourceSymbolId = String(chunk.metadata.symbolId ?? "");
-        if (sourceSymbolId && sourceSymbolId !== target.id) {
-          input.addEdge("CALLS", sourceSymbolId, target.id, input.workspaceName, input.repoName, metadata);
-        }
-      }
-    }
-  }
-}
-
-function candidateMatchesModuleSpecifier(symbol: CodeNode, moduleSpecifier: string, importerPath: string): boolean {
-  if (!symbol.file) {
-    return false;
-  }
-  if (moduleSpecifier.startsWith(".")) {
-    if (!importerPath) {
-      return false;
-    }
-    const resolvedModulePath = stripKnownExtension(normalize(joinPath(dirname(importerPath), moduleSpecifier)));
-    const symbolPath = stripKnownExtension(symbol.file);
-    return symbolPath === resolvedModulePath || symbolPath === `${resolvedModulePath}/index`;
-  }
-  const packageName = stringFromMetadata(symbol.metadata, "packageName") ?? symbol.packageName;
-  if (packageName) {
-    if (moduleSpecifier === packageName) {
-      return true;
-    }
-    if (moduleSpecifier.startsWith(`${packageName}/`)) {
-      const packageSubpath = moduleSpecifier.slice(packageName.length + 1);
-      return !packageSubpath || stripKnownExtension(symbol.file).includes(stripKnownExtension(packageSubpath));
-    }
-  }
-  const subpath = packageSubpath(moduleSpecifier);
-  return Boolean(subpath && stripKnownExtension(symbol.file).includes(stripKnownExtension(subpath)));
-}
-
-function packageSubpath(moduleSpecifier: string): string | undefined {
-  const parts = moduleSpecifier.split("/");
-  if (moduleSpecifier.startsWith("@")) {
-    return parts.slice(2).join("/") || undefined;
-  }
-  return parts.slice(1).join("/") || undefined;
-}
-
-function stripKnownExtension(path: string): string {
-  return path.replace(/\.(d\.)?[cm]?[jt]sx?$/, "");
-}
-
 function symbolLookupKey(file: string | undefined, name: string | undefined): string {
   return `${file ?? ""}\0${name ?? ""}`;
 }
@@ -388,33 +289,6 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
     groups.set(key, group);
   }
   return groups;
-}
-
-function astImportResolutionMetadata(
-  repo: string,
-  file: string,
-  importFact: FileFact["imports"][number],
-  target: CodeNode,
-): Record<string, unknown> {
-  const isScipBacked = typeof target.metadata.scipSymbol === "string";
-  return {
-    ownerRepo: repo,
-    ownerFile: file,
-    origin: "tree-sitter-import-resolution",
-    source: "tree-sitter-import-resolution",
-    evidenceSources: isScipBacked
-      ? ["tree-sitter-import", "scip-typescript"]
-      : ["tree-sitter-import", "tree-sitter-declaration"],
-    confidence: isScipBacked ? "medium" : "fallback",
-    moduleSpecifier: importFact.moduleSpecifier,
-    importedName: importFact.importedName,
-    localName: importFact.localName,
-    importKind: importFact.importKind,
-    roles: ["Import", "ReadAccess"],
-    scipSymbol: target.metadata.scipSymbol,
-    scipSymbolName: target.name,
-    scipSymbolKind: target.metadata.scipSymbolKind,
-  };
 }
 
 function exportResolutionMetadata(repo: string, file: string, target: CodeNode): Record<string, unknown> {

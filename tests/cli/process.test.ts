@@ -150,10 +150,10 @@ describe("code-intel process behavior", () => {
           added: 1,
           changed: 1,
           deleted: 2,
-          unchanged: 5,
+          unchanged: 12,
         },
         chunks: {
-          reused: 8,
+          reused: 15,
           embedded: 3,
         },
       });

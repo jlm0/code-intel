@@ -53,6 +53,7 @@ const edgeKinds: CodeEdge["kind"][] = [
 
 export class LadybugGraphStore implements CodeGraphRepository {
   private databasePath?: string;
+  private database?: Database;
   private connection?: Connection;
   private hasLock = false;
 
@@ -112,8 +113,12 @@ export class LadybugGraphStore implements CodeGraphRepository {
       if (this.connection) {
         await this.connection.close();
         this.connection = undefined;
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
       }
+      if (this.database) {
+        await this.database.close();
+        this.database = undefined;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
     } finally {
       await this.releaseProcessLock();
     }
@@ -139,24 +144,44 @@ export class LadybugGraphStore implements CodeGraphRepository {
     limit: number,
   ): Promise<RelatedCodeNode[]> {
     const seeds = await this.resolveSeedNodes(seed, 50);
-    const seedIds = seeds.map((node) => node.id);
+    const seedIds = edgeKind === "CALLS" && direction === "outgoing"
+      ? await this.expandOutgoingCallSeedIds(seeds)
+      : seeds.map((node) => node.id);
     if (seedIds.length === 0) {
       return [];
     }
+    const candidateLimit = Math.max(limit * 5, limit);
     if (direction === "incoming") {
-      return this.relatedRows(`
+      return rankRelatedRows(await this.relatedRows(`
         MATCH (node:CodeNode)-[edge:RELATES]->(seed:CodeNode)
         WHERE seed.id IN ${cypherValue(seedIds)} AND edge.kind = ${cypherValue(edgeKind)}
         ${nodeReturnClause("node")}, edge.kind AS edgeKind, edge.metadata AS edgeMetadata
-        LIMIT ${limit}
-      `);
+        LIMIT ${candidateLimit}
+      `), edgeKind, direction).slice(0, limit);
     }
-    return this.relatedRows(`
+    return rankRelatedRows(await this.relatedRows(`
       MATCH (seed:CodeNode)-[edge:RELATES]->(node:CodeNode)
       WHERE seed.id IN ${cypherValue(seedIds)} AND edge.kind = ${cypherValue(edgeKind)}
       ${nodeReturnClause("node")}, edge.kind AS edgeKind, edge.metadata AS edgeMetadata
-      LIMIT ${limit}
+      LIMIT ${candidateLimit}
+    `), edgeKind, direction).slice(0, limit);
+  }
+
+  private async expandOutgoingCallSeedIds(seeds: StoredCodeNode[]): Promise<string[]> {
+    const seedIds = new Set(seeds.map((node) => node.id));
+    const seedFiles = [...new Set(seeds.map((node) => node.file).filter((file): file is string => Boolean(file)))];
+    if (seedFiles.length === 0) {
+      return [...seedIds];
+    }
+    const fileRows = await this.rows(`
+      MATCH (n:CodeNode)
+      WHERE n.kind = 'File' AND n.file IN ${cypherValue(seedFiles)}
+      RETURN n.id AS id
     `);
+    for (const row of fileRows) {
+      seedIds.add(String(row.id));
+    }
+    return [...seedIds];
   }
 
   async getAdjacentNodes(nodeIds: string[], limit: number): Promise<RelatedCodeNode[]> {
@@ -399,13 +424,16 @@ export class LadybugGraphStore implements CodeGraphRepository {
     }
     for (let attempt = 0; attempt < 300; attempt += 1) {
       let connection: Connection | undefined;
+      let database: Database | undefined;
       try {
-        const database = new Database(this.databasePath);
+        database = new Database(this.databasePath);
         connection = new Connection(database);
         await connection.query("INSTALL vector; LOAD vector;");
+        this.database = database;
         return connection;
       } catch (error) {
         await connection?.close().catch(() => undefined);
+        await database?.close().catch(() => undefined);
         lastError = error;
         const message = String(error);
         if (
@@ -424,7 +452,14 @@ export class LadybugGraphStore implements CodeGraphRepository {
   private async rows(statement: string): Promise<Record<string, unknown>[]> {
     const result = await this.query(statement);
     const singleResult = Array.isArray(result) ? result[0] : result;
-    return singleResult.getAll() as Promise<Record<string, unknown>[]>;
+    try {
+      return await singleResult.getAll() as Record<string, unknown>[];
+    } finally {
+      const results = Array.isArray(result) ? result : [result];
+      for (const queryResult of results) {
+        queryResult.close();
+      }
+    }
   }
 
   private async relatedRows(statement: string): Promise<RelatedCodeNode[]> {
@@ -688,6 +723,11 @@ function stringMetadata(node: CodeNode, key: string): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function stringMetadataValue(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function semanticFilterWhereClause(filters: SemanticSearchFilters): string {
   const clauses = [
     filters.repo ? `node.repo = ${cypherValue(filters.repo)}` : undefined,
@@ -732,6 +772,48 @@ function mergeRelatedRows(
     push(second[index]);
   }
   return rows;
+}
+
+function rankRelatedRows(
+  rows: RelatedCodeNode[],
+  edgeKind: CodeEdge["kind"],
+  direction: "incoming" | "outgoing",
+): RelatedCodeNode[] {
+  const ranked = [...rows].sort((left, right) =>
+    relatedRowRank(left, edgeKind, direction) - relatedRowRank(right, edgeKind, direction) ||
+    (left.node.file ?? "").localeCompare(right.node.file ?? "") ||
+    (left.node.name ?? "").localeCompare(right.node.name ?? ""),
+  );
+  const deduped: RelatedCodeNode[] = [];
+  const seen = new Set<string>();
+  for (const row of ranked) {
+    if (seen.has(row.node.id)) {
+      continue;
+    }
+    seen.add(row.node.id);
+    deduped.push(row);
+  }
+  return deduped;
+}
+
+function relatedRowRank(
+  row: RelatedCodeNode,
+  edgeKind: CodeEdge["kind"],
+  direction: "incoming" | "outgoing",
+): number {
+  let rank = 100;
+  if (edgeKind === "CALLS" && direction === "outgoing") {
+    const moduleSpecifier = stringMetadataValue(row.edgeMetadata, "moduleSpecifier");
+    if (moduleSpecifier && !moduleSpecifier.startsWith(".")) rank -= 40;
+    if (row.node.kind === "Function" || row.node.kind === "Class") rank -= 20;
+    if (row.node.kind === "Symbol") rank -= 10;
+    if (row.edgeMetadata.confidence === "high") rank -= 8;
+    if (Array.isArray(row.edgeMetadata.evidenceSources) && row.edgeMetadata.evidenceSources.includes("scip-typescript")) {
+      rank -= 5;
+    }
+    if (moduleSpecifier?.startsWith(".")) rank += 10;
+  }
+  return rank;
 }
 
 function typedNodeProjection(node: CodeNode): { table: string; values: Record<string, unknown> } | undefined {

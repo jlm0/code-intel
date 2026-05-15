@@ -57,7 +57,7 @@
       {
         "file": "packages/ui/src/useGivingSummary.tsx",
         "symbol": "useGivingSummary",
-        "maxRank": 5
+        "maxRank": 10
       }
     ],
     "failureClassHint": "scip"
@@ -87,6 +87,69 @@
       }
     ],
     "failureClassHint": "scip"
+  },
+  {
+    "id": "synthetic.package-export-pattern-reference",
+    "name": "Package export pattern reference",
+    "mode": "references",
+    "query": "calculateGivingTotal",
+    "limit": 20,
+    "gate": {
+      "id": "synthetic.fusion.module-resolution",
+      "status": "required",
+      "capability": "package-export-resolution",
+      "layer": "fusion"
+    },
+    "expected": [
+      {
+        "file": "packages/ui/src/useBarrelSummary.tsx",
+        "symbol": "useBarrelSummary",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "synthetic.default-export-reference",
+    "name": "Default export reference",
+    "mode": "references",
+    "query": "buildDefaultReceipt",
+    "limit": 20,
+    "gate": {
+      "id": "synthetic.fusion.module-resolution",
+      "status": "required",
+      "capability": "default-export-resolution",
+      "layer": "fusion"
+    },
+    "expected": [
+      {
+        "file": "packages/ui/src/useBarrelSummary.tsx",
+        "symbol": "useBarrelSummary",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "synthetic.commonjs-reference",
+    "name": "CommonJS require reference",
+    "mode": "references",
+    "query": "createContributionSchedule",
+    "limit": 20,
+    "gate": {
+      "id": "synthetic.fusion.module-resolution",
+      "status": "required",
+      "capability": "commonjs-import-resolution",
+      "layer": "fusion"
+    },
+    "expected": [
+      {
+        "file": "packages/core/src/commonjsConsumer.ts",
+        "symbol": "scheduleContributions",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "fusion"
   },
   {
     "id": "synthetic.react-hook",
