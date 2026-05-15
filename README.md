@@ -18,7 +18,9 @@ node dist/cli/main.js mcp --workspace /path/to/workspace --index-path /path/to/.
 
 If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated, build, log, dependency, and local-dev runtime folders are ignored by default; pass `--include-ignored` only when those paths should be indexed or searched.
 
-`update` performs changed-file incremental reindexing. It fingerprints current files by bytes, reuses unchanged file chunk facts and cached embeddings, recomputes relationships into a fresh Ladybug generation, then atomically publishes that generation. Deleted files disappear because they do not contribute facts to the new generation.
+`update` performs changed-file incremental reindexing. It fingerprints current files by bytes, reuses unchanged file chunk facts, structural AST facts, and cached embeddings, recomputes relationships into a fresh Ladybug generation, then atomically publishes that generation. Deleted files disappear because they do not contribute facts to the new generation.
+
+The Tree-sitter layer exposes `extractSourceFileFacts()` for rich JS/TS structure and keeps `chunkSourceFile()` as the compatibility wrapper. File facts include imports, exports, declarations, calls, member access paths, ownership, tests, callbacks, stable ranges, source hashes, and containing chunk provenance. Import and export facts are also written as graph nodes with owning-file edges.
 
 The default embedding provider is local Jina through Transformers.js with `jinaai/jina-embeddings-v2-base-code`. Use `--embedding-provider hash` only when you need the deterministic fast fallback for tests, offline diagnostics, or comparison runs:
 

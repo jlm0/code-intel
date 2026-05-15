@@ -1,4 +1,7 @@
-import { chunkSourceFile, type SourceChunk } from "../treesitter/chunker.js";
+import {
+  extractSourceFileFacts,
+  type SourceChunk,
+} from "../treesitter/chunker.js";
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import type { DiscoveredWorkspace } from "../workspace/discovery.js";
 import {
@@ -66,14 +69,31 @@ export async function prepareFileFacts(input: {
       fileFactsByKey.set(key, {
         fingerprint: file.fingerprint,
         chunks: previousFact.chunks.map(cloneChunkFact),
+        imports: cloneFacts(previousFact.imports),
+        exports: cloneFacts(previousFact.exports),
+        declarations: cloneFacts(previousFact.declarations),
+        calls: cloneFacts(previousFact.calls),
+        memberAccesses: cloneFacts(previousFact.memberAccesses),
+        ownerships: cloneFacts(previousFact.ownerships),
+        testCases: cloneFacts(previousFact.testCases),
+        callbacks: cloneFacts(previousFact.callbacks),
       });
     } else {
+      const astFacts = extractSourceFileFacts({
+        relativePath: file.discoveredFile.relativePath,
+        content: file.content,
+      });
       fileFactsByKey.set(key, {
         fingerprint: file.fingerprint,
-        chunks: chunkSourceFile({
-          relativePath: file.discoveredFile.relativePath,
-          content: file.content,
-        }).map(sourceChunkToFact),
+        chunks: astFacts.chunks.map(sourceChunkToFact),
+        imports: cloneFacts(astFacts.imports),
+        exports: cloneFacts(astFacts.exports),
+        declarations: cloneFacts(astFacts.declarations),
+        calls: cloneFacts(astFacts.calls),
+        memberAccesses: cloneFacts(astFacts.memberAccesses),
+        ownerships: cloneFacts(astFacts.ownerships),
+        testCases: cloneFacts(astFacts.testCases),
+        callbacks: cloneFacts(astFacts.callbacks),
       });
     }
   }
@@ -121,4 +141,8 @@ function cloneChunkFact(chunk: ChunkFact): ChunkFact {
     calls: [...chunk.calls],
     embedding: chunk.embedding ? [...chunk.embedding] : undefined,
   };
+}
+
+function cloneFacts<T>(facts: T[]): T[] {
+  return facts.map((fact) => JSON.parse(JSON.stringify(fact)) as T);
 }

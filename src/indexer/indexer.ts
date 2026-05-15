@@ -23,6 +23,7 @@ import { embedGraphChunks, type EmbeddableChunkNode } from "./chunk-embeddings.j
 import {
   readActiveIndexFacts,
   writeIndexFacts,
+  type FileFact,
   type IndexFacts,
 } from "./fact-cache.js";
 import { prepareFileFacts } from "./file-facts.js";
@@ -206,6 +207,7 @@ async function buildIndexWorkspace(
       if (!fileFact) {
         continue;
       }
+      addAstBoundaryNodes(graph, workspace.workspaceName, repo, file, fileNode, fileFact);
       const chunks = fileFact.chunks;
       for (const chunk of chunks) {
         const symbolNode = addNode(graph, {
@@ -487,6 +489,105 @@ async function buildIndexWorkspace(
   await writeJsonAtomically(join(input.indexPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(input.indexPath, "workspace.json"), workspace);
   return manifest;
+}
+
+function addAstBoundaryNodes(
+  graph: MutableGraph,
+  workspaceName: string,
+  repo: { name: string; commit: string },
+  file: DiscoveredFile,
+  fileNode: CodeNode,
+  fileFact: FileFact,
+): void {
+  for (const importFact of fileFact.imports) {
+    const importNode = addNode(graph, {
+      id: createStableId({
+        kind: "import",
+        workspace: workspaceName,
+        repo: repo.name,
+        commit: repo.commit,
+        relativePath: file.relativePath,
+        suffix: importFact.idSuffix,
+      }),
+      kind: "Import",
+      workspace: workspaceName,
+      repo: repo.name,
+      packageName: file.packageName,
+      file: file.relativePath,
+      name: importFact.localName ?? importFact.importedName ?? importFact.moduleSpecifier,
+      language: file.language,
+      range: importFact.range,
+      textHash: importFact.contentHash,
+      metadata: {
+        absolutePath: file.absolutePath,
+        fileKind: fileKindForPath(file.relativePath),
+        symbolKind: "Import",
+        moduleSpecifier: importFact.moduleSpecifier,
+        importKind: importFact.importKind,
+        importedName: importFact.importedName,
+        localName: importFact.localName,
+        isDefault: importFact.isDefault,
+        isNamespace: importFact.isNamespace,
+        ownerRepo: repo.name,
+        ownerFile: file.relativePath,
+        origin: "tree-sitter-import",
+        derivedFrom: importFact.contentHash,
+      },
+    });
+    addEdge(
+      graph,
+      "IMPORTS",
+      fileNode.id,
+      importNode.id,
+      workspaceName,
+      repo.name,
+      ownerFileMetadata(repo.name, file.relativePath, "tree-sitter-import"),
+    );
+  }
+
+  for (const exportFact of fileFact.exports) {
+    const exportNode = addNode(graph, {
+      id: createStableId({
+        kind: "export",
+        workspace: workspaceName,
+        repo: repo.name,
+        commit: repo.commit,
+        relativePath: file.relativePath,
+        suffix: exportFact.idSuffix,
+      }),
+      kind: "Export",
+      workspace: workspaceName,
+      repo: repo.name,
+      packageName: file.packageName,
+      file: file.relativePath,
+      name: exportFact.exportedName,
+      language: file.language,
+      range: exportFact.range,
+      textHash: exportFact.contentHash,
+      metadata: {
+        absolutePath: file.absolutePath,
+        fileKind: fileKindForPath(file.relativePath),
+        symbolKind: "Export",
+        exportKind: exportFact.exportKind,
+        exportedName: exportFact.exportedName,
+        localName: exportFact.localName,
+        moduleSpecifier: exportFact.moduleSpecifier,
+        ownerRepo: repo.name,
+        ownerFile: file.relativePath,
+        origin: "tree-sitter-export",
+        derivedFrom: exportFact.contentHash,
+      },
+    });
+    addEdge(
+      graph,
+      "EXPORTS",
+      fileNode.id,
+      exportNode.id,
+      workspaceName,
+      repo.name,
+      ownerFileMetadata(repo.name, file.relativePath, "tree-sitter-export"),
+    );
+  }
 }
 
 function createIncrementalStats(input: {
