@@ -1,0 +1,11 @@
+{
+  "name": "@fixture/core",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./barrel": "./src/barrel.ts",
+    "./default-tool": "./src/internal/defaultTool.ts",
+    "./*": "./src/*.ts"
+  }
+}
