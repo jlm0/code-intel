@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "code-intel.eval-pack.v1",
+  "id": "js-ts-adversarial",
+  "name": "JS/TS Adversarial Synthetic Pack",
+  "version": "1.0.0",
+  "kind": "synthetic",
+  "description": "Adversarial regression pack. Cases are designed to fail today and force AST, SCIP, fusion, chunking, graph edge, evidence, test-linking, and ranking improvements. Cases start as target gates; codex graduates them to required once the implementation can prove them.",
+  "corpus": {
+    "type": "local",
+    "path": "corpus",
+    "repoPaths": ["."]
+  },
+  "caseFiles": [
+    "cases/adversarial-queries.json",
+    "cases/adversarial-ranking.json"
+  ],
+  "astCaseFiles": ["cases/adversarial-ast.json"],
+  "graphCaseFiles": ["cases/adversarial-graph.json"]
+}
