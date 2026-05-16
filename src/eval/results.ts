@@ -68,6 +68,10 @@ export interface GraphPathEdgeResult {
   evidenceSources: string[];
   origin?: string;
   confidence?: string;
+  ownerFile?: string;
+  range?: unknown;
+  fallbackReason?: string;
+  direction?: "outgoing" | "incoming";
 }
 
 export interface GraphEvalCaseResult {

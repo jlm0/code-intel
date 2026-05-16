@@ -385,7 +385,11 @@ function scipRolesForReference(
   reference: ScipReference,
 ): ScipOccurrenceRole[] {
   const roles = new Set<ScipOccurrenceRole>(reference.roles);
-  if (fileFact?.imports.some((importFact) => rangeContains(importFact.range, reference.range))) {
+  if (fileFact?.imports.some((importFact) =>
+    rangeContains(importFact.range, reference.range) ||
+    importFact.localName === reference.symbolName ||
+    importFact.importedName === reference.symbolName
+  )) {
     roles.add("Import");
   }
   if (reference.isTest) {

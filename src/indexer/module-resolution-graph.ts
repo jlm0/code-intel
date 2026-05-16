@@ -130,22 +130,27 @@ function applyResolvedImportGraphFact(
 
   for (const target of callTargetsForImport(input, nodesById, exportsByFileAndName, importFact, directTargetSymbol)) {
     const callMetadata = importMetadata(input.repo.name, importFact, target);
-    if (fileNode) {
-      input.addEdge("CALLS", fileNode.id, target.id, input.workspaceName, input.repo.name, callMetadata);
-      if (fileKindForPath(importFact.importerFile) === "test") {
-        input.addEdge("TESTS", fileNode.id, target.id, input.workspaceName, input.repo.name, callMetadata);
-      }
+    const callingChunks = chunksCallingImport(input, importFact, target);
+    const fileContainsCall = fileCallsImport(input, importFact, target);
+    const usageMetadata = callUsageMetadata(callMetadata);
+    const fileIsTest = fileKindForPath(importFact.importerFile) === "test";
+    if (fileNode && fileContainsCall) {
+      input.addEdge("REFERENCES", fileNode.id, target.id, input.workspaceName, input.repo.name, usageMetadata);
+      input.addEdge("CALLS", fileNode.id, target.id, input.workspaceName, input.repo.name, usageMetadata);
     }
-    for (const chunk of chunksCallingImport(input, importFact, target)) {
-      input.addEdge("REFERENCES", chunk.id, target.id, input.workspaceName, input.repo.name, callMetadata);
-      input.addEdge("MENTIONS", chunk.id, target.id, input.workspaceName, input.repo.name, callMetadata);
-      input.addEdge("CALLS", chunk.id, target.id, input.workspaceName, input.repo.name, callMetadata);
-      if (chunk.kind === "Test" || fileKindForPath(importFact.importerFile) === "test") {
-        input.addEdge("TESTS", chunk.id, target.id, input.workspaceName, input.repo.name, callMetadata);
+    if (fileNode && fileIsTest) {
+      input.addEdge("TESTS", fileNode.id, target.id, input.workspaceName, input.repo.name, testMetadata(callMetadata));
+    }
+    for (const chunk of callingChunks) {
+      input.addEdge("REFERENCES", chunk.id, target.id, input.workspaceName, input.repo.name, usageMetadata);
+      input.addEdge("MENTIONS", chunk.id, target.id, input.workspaceName, input.repo.name, usageMetadata);
+      input.addEdge("CALLS", chunk.id, target.id, input.workspaceName, input.repo.name, usageMetadata);
+      if (chunk.kind === "Test" || fileIsTest) {
+        input.addEdge("TESTS", chunk.id, target.id, input.workspaceName, input.repo.name, testMetadata(usageMetadata));
       }
       const sourceSymbolId = String(chunk.metadata.symbolId ?? "");
       if (sourceSymbolId && sourceSymbolId !== target.id) {
-        input.addEdge("CALLS", sourceSymbolId, target.id, input.workspaceName, input.repo.name, callMetadata);
+        input.addEdge("CALLS", sourceSymbolId, target.id, input.workspaceName, input.repo.name, usageMetadata);
       }
     }
   }
@@ -197,17 +202,37 @@ function chunksCallingImport(
       if (!rangeContains(chunk.range!, call.range)) {
         return false;
       }
-      if (importFact.isNamespace && importFact.localName) {
-        return call.receiver === importFact.localName || call.memberPath?.startsWith(`${importFact.localName}.`);
-      }
-      return (
-        call.name === importFact.localName ||
-        call.name === importFact.importedName ||
-        call.propertyName === importFact.localName ||
-        call.propertyName === target.name
-      );
+      return callMatchesImport(call, importFact, target);
     });
   });
+}
+
+function fileCallsImport(
+  input: ApplyResolvedModuleGraphFactsInput,
+  importFact: ResolvedImportFact,
+  target: CodeNode,
+): boolean {
+  return (input.fileFactsByRelativePath.get(importFact.importerFile)?.calls ?? []).some((call) =>
+    callMatchesImport(call, importFact, target),
+  );
+}
+
+function callMatchesImport(
+  call: FileFact["calls"][number],
+  importFact: ResolvedImportFact,
+  target: CodeNode,
+): boolean {
+  if (importFact.isNamespace && importFact.localName) {
+    return call.receiver === importFact.localName || Boolean(call.memberPath?.startsWith(`${importFact.localName}.`));
+  }
+  return (
+    call.name === importFact.localName ||
+    call.name === importFact.importedName ||
+    call.receiver === importFact.localName ||
+    Boolean(importFact.localName && call.memberPath?.startsWith(`${importFact.localName}.`)) ||
+    call.propertyName === importFact.localName ||
+    call.propertyName === target.name
+  );
 }
 
 function createNodeIdIndex(input: ApplyResolvedModuleGraphFactsInput): Map<string, CodeNode> {
@@ -337,6 +362,33 @@ function evidenceSourcesForTarget(sourceFact: string, target: CodeNode | undefin
   ].filter((source): source is string => Boolean(source));
 }
 
+function testMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...metadata,
+    evidenceSources: mergeStringArrays(metadata.evidenceSources, "tree-sitter-test"),
+    roles: mergeStringArrays(metadata.roles, "Test"),
+    testContext: true,
+  };
+}
+
+function callUsageMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...metadata,
+    roles: mergeStringArrays(metadata.roles, "Call"),
+  };
+}
+
+function mergeStringArrays(left: unknown, right: unknown): string[] {
+  return [...new Set([...toStringArray(left), ...toStringArray(right)])].sort();
+}
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  }
+  return typeof value === "string" && value.length > 0 ? [value] : [];
+}
+
 function exportKey(file: string, exportedName: string | undefined): string {
   return `${file}\0${exportedName ?? ""}`;
 }
@@ -363,4 +415,3 @@ function fileKindForPath(relativePath: string): string {
     ? "test"
     : "source";
 }
-

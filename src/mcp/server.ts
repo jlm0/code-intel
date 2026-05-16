@@ -8,6 +8,7 @@ import { getStatus } from "../core/status.js";
 import { createQueryEngine, type QueryEngine } from "../query/query-engine.js";
 import { searchText } from "../search/exact.js";
 import {
+  EdgeKindSchema,
   HealthResultSchema,
   McpToolPayloadSchema,
   QueryResultSchema,
@@ -204,11 +205,19 @@ export async function startMcpServer(options: RuntimeOptions): Promise<void> {
         fromId: z.string().min(1),
         toId: z.string().min(1),
         limit: z.number().int().min(1).max(50).optional(),
+        maxDepth: z.number().int().min(1).max(8).optional(),
+        allowedEdgeKinds: z.array(EdgeKindSchema).min(1).optional(),
+        direction: z.enum(["outgoing", "incoming", "either"]).optional(),
       },
     },
-    async ({ fromId, toId, limit }) =>
+    async ({ fromId, toId, limit, maxDepth, allowedEdgeKinds, direction }) =>
       toolPayload("trace_path", await withQueryEngine((queryEngine) =>
-        queryEngine.tracePath(fromId, toId, { limit: limit ?? 20 }),
+        queryEngine.tracePath(fromId, toId, {
+          limit: limit ?? 20,
+          maxDepth,
+          allowedEdgeKinds,
+          direction,
+        }),
       ), QueryResultSchema),
   );
 
@@ -227,8 +236,18 @@ export async function startMcpServer(options: RuntimeOptions): Promise<void> {
     try {
       return await callback(queryEngine);
     } finally {
-      await closeQueryEngine();
+      scheduleQueryEngineClose();
     }
+  }
+
+  function scheduleQueryEngineClose(): void {
+    if (queryEngineCloseTimer) {
+      clearTimeout(queryEngineCloseTimer);
+    }
+    queryEngineCloseTimer = setTimeout(() => {
+      void closeQueryEngine();
+    }, 1_000);
+    queryEngineCloseTimer.unref?.();
   }
 
   async function closeQueryEngine(): Promise<void> {

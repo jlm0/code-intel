@@ -1,6 +1,13 @@
 import { resolveActiveIndexSnapshot, type ActiveIndexSnapshot } from "../core/index-artifacts.js";
 import { truncateUtf8Bytes } from "../core/text.js";
 import { LadybugGraphStore } from "../graph/ladybug-store.js";
+import {
+  buildGraphEdgeIndex,
+  buildGraphNodeIndex,
+  findGraphPath,
+  type GraphPathTraversalResult,
+  type GraphTraversalDirection,
+} from "../graph/path-traversal.js";
 import type { CodeGraphRepository, SemanticSearchFilters, StoredCodeNode } from "../graph/repository.js";
 import {
   QueryResultSchema,
@@ -28,6 +35,12 @@ export interface QueryLimitOptions {
 }
 
 export interface SemanticQueryOptions extends QueryLimitOptions, SemanticSearchFilters {}
+
+export interface TracePathOptions extends QueryLimitOptions {
+  maxDepth?: number;
+  allowedEdgeKinds?: CodeEdge["kind"][];
+  direction?: GraphTraversalDirection;
+}
 
 export function createQueryEngine(options: QueryEngineOptions): QueryEngine {
   const snapshot = resolveActiveIndexSnapshot(options.indexPath);
@@ -143,12 +156,30 @@ export class QueryEngine {
     });
   }
 
-  async tracePath(fromId: string, toId: string, options: QueryLimitOptions): Promise<QueryResult> {
-    const path = await this.store.tracePath(fromId, toId, options.limit);
+  async tracePath(fromId: string, toId: string, options: TracePathOptions): Promise<QueryResult> {
+    const nodes = await this.store.getNodes();
+    const edges = await this.store.getEdges();
+    const nodeIndex = buildGraphNodeIndex(nodes);
+    const traversal = findGraphPath({
+      startIds: new Set([fromId]),
+      targetIds: new Set([toId]),
+      nodeIndex,
+      edgeIndex: buildGraphEdgeIndex(edges),
+      options: {
+        maxDepth: options.maxDepth ?? options.limit,
+        allowedKinds: options.allowedEdgeKinds,
+        direction: options.direction ?? "either",
+      },
+    });
+    const path = traversal?.path ?? [];
     return parseQueryResult({
       schemaVersion,
       query: `${fromId} -> ${toId}`,
-      results: path.map((node) => nodeToResult(node, ["graph_path"])),
+      results: path.slice(0, options.limit).map((node, index) =>
+        nodeToResult(node, ["graph_path"], {
+          metadata: pathMetadata(node, traversal, index),
+        }),
+      ),
     });
   }
 
@@ -207,6 +238,34 @@ function nodeToResult(
 
 function sanitizeMetadata(node: CodeNode): Record<string, unknown> {
   const { content: _content, ...metadata } = node.metadata as Record<string, unknown>;
+  return metadata;
+}
+
+function pathMetadata(
+  node: StoredCodeNode,
+  traversal: GraphPathTraversalResult | undefined,
+  index: number,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    ...sanitizeMetadata(node),
+    pathIndex: index,
+  };
+  if (!traversal) {
+    return metadata;
+  }
+  metadata.pathRank = traversal.rank;
+  metadata.pathScore = traversal.score;
+  metadata.pathEdges = traversal.edges.map(({ edge, direction }) => relationshipMetadata(edge.kind, {
+    ...edge.metadata,
+    traversalDirection: direction,
+  }));
+  const incomingEdge = traversal.edges[index - 1];
+  if (incomingEdge) {
+    metadata.incomingPathEdge = relationshipMetadata(incomingEdge.edge.kind, {
+      ...incomingEdge.edge.metadata,
+      traversalDirection: incomingEdge.direction,
+    });
+  }
   return metadata;
 }
 

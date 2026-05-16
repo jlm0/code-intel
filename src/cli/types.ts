@@ -1,4 +1,5 @@
 import type { RuntimeOptions } from "../core/context.js";
+import type { CodeEdge } from "../schema/schemas.js";
 
 export interface CliRuntime {
   stdout: Pick<NodeJS.WriteStream, "write" | "isTTY">;
@@ -15,6 +16,8 @@ export interface CliOptions extends RuntimeOptions {
   filterPackage?: string;
   fileKind?: string;
   symbolKind?: string;
+  edgeKind?: CodeEdge["kind"][];
+  direction?: "outgoing" | "incoming" | "either";
   suite?: string;
   evalPack?: string;
   evalCachePath?: string;

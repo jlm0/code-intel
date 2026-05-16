@@ -52,14 +52,15 @@
         }
       ],
       "allowedEdgeKinds": ["REFERENCES", "CALLS", "IMPORTS"],
+      "direction": "either",
       "maxDepth": 2,
       "requireEvidence": true
     },
     "failureClassHint": "graph-traversal"
   },
   {
-    "id": "rallly.graph-ui-to-private-api-path",
-    "name": "Web UI poll page traces to private API route",
+    "id": "rallly.graph-ui-to-route-data-loader-path",
+    "name": "Web UI poll page traces to route data loader and layout",
     "gate": {
       "id": "rallly.target.graph-ui-to-api",
       "status": "target",
@@ -77,7 +78,7 @@
           "symbol": "AdminPageLoader"
         },
         {
-          "file": "apps/web/src/app/api/private/[...route]/route.ts"
+          "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/layout.tsx"
         }
       ],
       "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],

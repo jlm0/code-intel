@@ -122,7 +122,7 @@ describe("runEvalSuite", () => {
     expect(graphCases?.map((testCase) => testCase.id)).toEqual([
       "rallly.graph.route-mutation-database-typed-path",
       "rallly.graph.middleware-to-route-usage-path",
-      "rallly.graph-ui-to-private-api-path",
+      "rallly.graph-ui-to-route-data-loader-path",
       "rallly.graph-test-to-implementation-evidence-path",
       "rallly.graph-no-mention-only-billing-flow",
     ]);

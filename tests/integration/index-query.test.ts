@@ -191,6 +191,27 @@ describe("index and query integration", () => {
             .filter((edge) => edge.kind === "TESTS")
             .map((edge) => nodeById.get(edge.fromId)?.file),
         ).toContain("packages/core/src/tithe.test.ts");
+        const nextLayout = nodes.find(
+          (node) => node.kind === "File" && node.file === "packages/ui/src/app/poll/[id]/layout.tsx",
+        );
+        const nextLoader = nodes.find(
+          (node) => node.kind === "File" && node.file === "packages/ui/src/app/poll/[id]/admin-page-loader.tsx",
+        );
+        expect(nextLayout).toBeDefined();
+        expect(nextLoader).toBeDefined();
+        expect(edges).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "REFERENCES",
+              fromId: nextLoader!.id,
+              toId: nextLayout!.id,
+              metadata: expect.objectContaining({
+                origin: "next-app-router",
+                evidenceSources: expect.arrayContaining(["next-app-router", "file-convention"]),
+              }),
+            }),
+          ]),
+        );
       } finally {
         await store.close();
       }
@@ -235,6 +256,21 @@ describe("index and query integration", () => {
           { limit: 10 },
         );
         expect(path.results.map((result) => result.id)).toContain(calculate.results[0]!.id);
+        expect(path.results.some((result) => Array.isArray(result.metadata.pathEdges))).toBe(true);
+
+        const nextPage = await secondEngine.findSymbol("Page", { limit: 10 });
+        const nextLayout = await secondEngine.findSymbol("PollLayout", { limit: 10 });
+        const nextRoutePath = await secondEngine.tracePath(
+          nextPage.results.find((result) => result.file === "packages/ui/src/app/poll/[id]/page.tsx")!.id,
+          nextLayout.results.find((result) => result.file === "packages/ui/src/app/poll/[id]/layout.tsx")!.id,
+          { limit: 10, allowedEdgeKinds: ["CALLS", "REFERENCES", "IMPORTS"], direction: "either" },
+        );
+        expect(nextRoutePath.results.map((result) => result.file)).toEqual(
+          expect.arrayContaining([
+            "packages/ui/src/app/poll/[id]/admin-page-loader.tsx",
+            "packages/ui/src/app/poll/[id]/layout.tsx",
+          ]),
+        );
 
         const renderMethods = await secondEngine.findSymbol("render", { limit: 10 });
         const duplicateMethodResults = renderMethods.results.filter(

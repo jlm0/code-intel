@@ -91,12 +91,13 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
       if (!name || isParameterSymbol(symbol.symbol)) {
         continue;
       }
-      symbolInfoBySymbol.set(symbol.symbol, symbol);
+      const normalizedSymbol = normalizeScipSymbol(document.relativePath, symbol.symbol);
+      symbolInfoBySymbol.set(normalizedSymbol, symbol);
       const definitionOccurrence = document.occurrences.find(
         (occurrence) => occurrence.symbol === symbol.symbol && hasRole(occurrence, SymbolRole.Definition),
       );
       const definition: ScipDefinition = {
-        symbol: symbol.symbol,
+        symbol: normalizedSymbol,
         name,
         kind: symbolKindName(symbol.kind),
         relativePath: document.relativePath,
@@ -107,7 +108,7 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
         documentation: [...symbol.documentation],
       };
       definitions.push(definition);
-      definitionBySymbol.set(symbol.symbol, definition);
+      definitionBySymbol.set(normalizedSymbol, definition);
     }
   }
 
@@ -118,8 +119,9 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
       if (!occurrence.symbol || isParameterSymbol(occurrence.symbol)) {
         continue;
       }
-      const definition = definitionBySymbol.get(occurrence.symbol);
-      const symbolInfo = symbolInfoBySymbol.get(occurrence.symbol);
+      const normalizedSymbol = normalizeScipSymbol(document.relativePath, occurrence.symbol);
+      const definition = definitionBySymbol.get(normalizedSymbol);
+      const symbolInfo = symbolInfoBySymbol.get(normalizedSymbol);
       const symbolName = definition?.name ?? extractSymbolName(symbolInfo?.documentation ?? [], occurrence.symbol);
       if (!symbolName) {
         continue;
@@ -127,6 +129,7 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
       const symbolKind = definition?.kind ?? symbolKindName(symbolInfo?.kind);
       const normalizedOccurrence = normalizeOccurrence({
         occurrence,
+        symbol: normalizedSymbol,
         symbolName,
         symbolKind,
         relativePath: document.relativePath,
@@ -139,7 +142,7 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
         continue;
       }
       references.push({
-        symbol: occurrence.symbol,
+        symbol: normalizedSymbol,
         symbolName: definition.name,
         symbolKind: definition.kind,
         relativePath: document.relativePath,
@@ -161,13 +164,14 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
 
 function normalizeOccurrence(input: {
   occurrence: Occurrence;
+  symbol: string;
   symbolName: string;
   symbolKind: string;
   relativePath: string;
 }): ScipOccurrence {
   const roles = occurrenceRoles(input.occurrence);
   return {
-    symbol: input.occurrence.symbol,
+    symbol: input.symbol,
     symbolName: input.symbolName,
     symbolKind: input.symbolKind,
     relativePath: input.relativePath,
@@ -186,6 +190,14 @@ function normalizeOccurrence(input: {
     isTest: hasRole(input.occurrence, SymbolRole.Test) || fileKindForPath(input.relativePath) === "test",
     isForwardDefinition: hasRole(input.occurrence, SymbolRole.ForwardDefinition),
   };
+}
+
+function normalizeScipSymbol(relativePath: string, symbol: string): string {
+  return isLocalScipSymbol(symbol) ? `local ${relativePath} ${symbol.slice("local ".length)}` : symbol;
+}
+
+function isLocalScipSymbol(symbol: string): boolean {
+  return /^local \d+/.test(symbol);
 }
 
 function occurrenceRoles(occurrence: Occurrence): ScipOccurrenceRole[] {
@@ -216,10 +228,12 @@ function extractSymbolName(documentation: string[], symbol: string): string | un
   const doc = documentation.join("\n");
   const docMatch =
     doc.match(/\bfunction\s+([A-Za-z_$][\w$]*)/) ??
+    doc.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/) ??
     doc.match(/\bclass\s+([A-Za-z_$][\w$]*)/) ??
     doc.match(/\binterface\s+([A-Za-z_$][\w$]*)/) ??
     doc.match(/\btype\s+([A-Za-z_$][\w$]*)/) ??
-    doc.match(/\(method\)\s+([A-Za-z_$][\w$]*)/);
+    doc.match(/\(method\)\s+([A-Za-z_$][\w$]*)/) ??
+    doc.match(/\(property\)\s+([A-Za-z_$][\w$]*)/);
   if (docMatch?.[1]) {
     return docMatch[1];
   }

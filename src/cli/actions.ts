@@ -111,6 +111,9 @@ export function createDefaultActions(): CliActions {
       return withQueryEngine(context, (engine) =>
         engine.tracePath(fromId, toId, {
           limit: options.limit ?? 20,
+          maxDepth: options.depth,
+          allowedEdgeKinds: options.edgeKind,
+          direction: options.direction,
         }),
       );
     },

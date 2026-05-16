@@ -122,11 +122,25 @@ describe("fusion module resolution", () => {
             node.name === "createContributionSchedule" &&
             node.file === "packages/legacy/src/legacy.js",
         );
+        const fixtureClientSymbol = nodes.find(
+          (node) =>
+            node.kind === "Symbol" &&
+            node.name === "fixtureClient" &&
+            node.file === "packages/core/src/client.ts",
+        );
+        const clientConsumerSymbol = nodes.find(
+          (node) =>
+            node.kind === "Function" &&
+            node.name === "createReceiptViaClient" &&
+            node.file === "packages/core/src/clientConsumer.ts",
+        );
 
         expect(uiFile).toBeDefined();
         expect(barrelFile).toBeDefined();
         expect(defaultSymbol).toBeDefined();
         expect(legacySymbol).toBeDefined();
+        expect(fixtureClientSymbol).toBeDefined();
+        expect(clientConsumerSymbol).toBeDefined();
 
         expect(edges).toEqual(
           expect.arrayContaining([
@@ -168,6 +182,15 @@ describe("fusion module resolution", () => {
               nodeById.get(edge.fromId)?.file === "packages/core/src/commonjsConsumer.ts" &&
               edge.toId === legacySymbol!.id &&
               edge.metadata.importKind === "commonjs",
+          ),
+        ).toBe(true);
+        expect(
+          edges.some(
+            (edge) =>
+              edge.kind === "CALLS" &&
+              edge.fromId === clientConsumerSymbol!.id &&
+              edge.toId === fixtureClientSymbol!.id &&
+              edge.metadata.moduleSpecifier === "./client",
           ),
         ).toBe(true);
       } finally {

@@ -787,13 +787,25 @@ function rankRelatedRows(
   const deduped: RelatedCodeNode[] = [];
   const seen = new Set<string>();
   for (const row of ranked) {
-    if (seen.has(row.node.id)) {
+    const dedupeKey = relatedRowDedupeKey(row, edgeKind, direction);
+    if (seen.has(dedupeKey)) {
       continue;
     }
-    seen.add(row.node.id);
+    seen.add(dedupeKey);
     deduped.push(row);
   }
   return deduped;
+}
+
+function relatedRowDedupeKey(
+  row: RelatedCodeNode,
+  edgeKind: CodeEdge["kind"],
+  direction: "incoming" | "outgoing",
+): string {
+  if (edgeKind === "REFERENCES" && direction === "incoming" && row.node.file) {
+    return `file:${row.node.file}`;
+  }
+  return row.node.id;
 }
 
 function relatedRowRank(
@@ -813,7 +825,25 @@ function relatedRowRank(
     }
     if (moduleSpecifier?.startsWith(".")) rank += 10;
   }
+  if (edgeKind === "REFERENCES" && direction === "incoming") {
+    const isCallUsage = metadataArrayIncludes(row.edgeMetadata.roles, "Call");
+    if (row.node.metadata.fileKind === "source") rank -= 18;
+    if (row.node.metadata.fileKind === "test") rank += 18;
+    if (row.node.kind === "Function" || row.node.kind === "Chunk") rank -= 14;
+    if (row.node.kind === "File") rank += isCallUsage ? -10 : 18;
+    if (isCallUsage) rank -= 18;
+    if (row.edgeMetadata.confidence === "high") rank -= 8;
+    if (metadataArrayIncludes(row.edgeMetadata.evidenceSources, "scip-typescript")) rank -= 6;
+    if (metadataArrayIncludes(row.edgeMetadata.evidenceSources, "module-resolution")) rank -= 22;
+    if (metadataArrayIncludes(row.edgeMetadata.evidenceSources, "tree-sitter-import")) rank -= 6;
+    if (metadataArrayIncludes(row.edgeMetadata.roles, "Import") && !isCallUsage) rank += 4;
+    if (row.edgeMetadata.scipRange) rank -= 4;
+  }
   return rank;
+}
+
+function metadataArrayIncludes(value: unknown, expected: string): boolean {
+  return Array.isArray(value) && value.includes(expected);
 }
 
 function typedNodeProjection(node: CodeNode): { table: string; values: Record<string, unknown> } | undefined {

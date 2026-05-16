@@ -137,6 +137,7 @@ const GraphPathExistsCheckSchema = z.object({
   type: z.literal("path-exists"),
   nodes: z.array(GraphNodeSelectorSchema).min(2),
   allowedEdgeKinds: z.array(GraphEdgeKindSchema).min(1).optional(),
+  direction: z.enum(["outgoing", "incoming", "either"]).default("outgoing"),
   maxDepth: z.number().int().min(1).max(8).default(4),
   maxRank: z.number().int().min(1).optional(),
   requireEvidence: GraphEvidenceRequirementSchema.optional(),
@@ -147,6 +148,7 @@ const GraphNoPathCheckSchema = z.object({
   from: GraphNodeSelectorSchema,
   to: GraphNodeSelectorSchema,
   allowedEdgeKinds: z.array(GraphEdgeKindSchema).min(1).optional(),
+  direction: z.enum(["outgoing", "incoming", "either"]).default("outgoing"),
   maxDepth: z.number().int().min(1).max(8).default(4),
 });
 

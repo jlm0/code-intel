@@ -26,6 +26,9 @@ describe("SCIP integration", () => {
       expect(facts.definitions.map((definition) => definition.name)).toContain(
         "calculateGivingTotal",
       );
+      expect(facts.definitions.map((definition) => definition.name)).toContain(
+        "calculateVariableGivingTotal",
+      );
       expect(facts.references.some((reference) => reference.symbolName === "calculateGivingTotal")).toBe(true);
       expect(facts.occurrences).toEqual(
         expect.arrayContaining([
@@ -47,6 +50,11 @@ describe("SCIP integration", () => {
           }),
         ]),
       );
+      expect(
+        facts.occurrences
+          .filter((occurrence) => occurrence.symbol.startsWith("local "))
+          .every((occurrence) => occurrence.symbol.includes(occurrence.relativePath)),
+      ).toBe(true);
       expect(facts.references).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

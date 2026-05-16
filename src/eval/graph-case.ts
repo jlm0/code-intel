@@ -1,5 +1,15 @@
 import type { CodeEdge } from "../schema/schemas.js";
 import type { CodeGraphRepository, StoredCodeNode } from "../graph/repository.js";
+import {
+  buildGraphEdgeIndex,
+  buildGraphNodeIndex,
+  collectEvidenceSources,
+  evidenceSatisfied,
+  findGraphPath,
+  findOrderedGraphPath,
+  type GraphEdgeIndex as TraversalEdgeIndex,
+  type GraphNodeIndex as TraversalNodeIndex,
+} from "../graph/path-traversal.js";
 import type {
   EvalFailureClass,
   GraphCheck,
@@ -14,15 +24,8 @@ import type {
   GraphPathNodeResult,
 } from "./results.js";
 
-interface NodeIndex {
-  byId: Map<string, StoredCodeNode>;
-  list: StoredCodeNode[];
-}
-
-interface EdgeIndex {
-  outgoing: Map<string, CodeEdge[]>;
-  incoming: Map<string, CodeEdge[]>;
-}
+type NodeIndex = TraversalNodeIndex;
+type EdgeIndex = TraversalEdgeIndex;
 
 export async function runGraphEvalCase(
   testCase: GraphEvalCase,
@@ -92,24 +95,22 @@ function evaluateEdgeExists(
   const toSet = new Set(toNodes.map((node) => node.id));
   const direction = check.direction ?? "outgoing";
   for (const fromNode of fromNodes) {
-    const candidateEdges = collectEdges(fromNode.id, edges, direction);
-    for (const edge of candidateEdges) {
-      const counterpart = direction === "incoming" ? edge.fromId : edge.toId;
-      if (!toSet.has(counterpart)) {
+    for (const candidate of collectDirectedEdges(fromNode.id, edges, direction)) {
+      if (!toSet.has(candidate.counterpartId)) {
         continue;
       }
-      if (check.allowedKinds && !check.allowedKinds.includes(edge.kind)) {
+      if (check.allowedKinds && !check.allowedKinds.includes(candidate.edge.kind)) {
         continue;
       }
-      if (!evidenceSatisfied(edge.metadata, check.requireEvidence)) {
+      if (!evidenceSatisfied(candidate.edge.metadata, check.requireEvidence)) {
         continue;
       }
       return {
         passed: true,
         actual: {
           nodesResolved: { from: fromNodes.length, to: toNodes.length },
-          edges: [edgeMetadata(edge)],
-          path: [pathNodeFromStored(fromNode), pathNodeFromStored(nodes.byId.get(counterpart))],
+          edges: [edgeMetadata(candidate.edge, candidate.direction)],
+          path: [pathNodeFromStored(fromNode), pathNodeFromStored(nodes.byId.get(candidate.counterpartId))],
         },
       };
     }
@@ -141,18 +142,17 @@ function evaluateNoEdge(
   const toSet = new Set(toNodes.map((node) => node.id));
   const direction = check.direction ?? "outgoing";
   for (const fromNode of fromNodes) {
-    for (const edge of collectEdges(fromNode.id, edges, direction)) {
-      const counterpart = direction === "incoming" ? edge.fromId : edge.toId;
-      if (!toSet.has(counterpart)) continue;
-      if (check.allowedKinds && !check.allowedKinds.includes(edge.kind)) {
+    for (const candidate of collectDirectedEdges(fromNode.id, edges, direction)) {
+      if (!toSet.has(candidate.counterpartId)) continue;
+      if (check.allowedKinds && !check.allowedKinds.includes(candidate.edge.kind)) {
         continue;
       }
       return {
         passed: false,
         actual: {
           nodesResolved: { from: fromNodes.length, to: toNodes.length },
-          edges: [edgeMetadata(edge)],
-          issue: `forbidden edge ${edge.kind} found`,
+          edges: [edgeMetadata(candidate.edge, candidate.direction)],
+          issue: `forbidden edge ${candidate.edge.kind} found`,
         },
       };
     }
@@ -185,13 +185,16 @@ function evaluatePathExists(
   const allowedKinds = check.allowedEdgeKinds;
   const requireEvidence = check.requireEvidence;
   const maxDepth = check.maxDepth ?? 4;
-  const result = findOrderedPath({
+  const result = findOrderedGraphPath({
     sequence,
-    edges,
+    edgeIndex: edges,
     nodeIndex: nodes,
-    allowedKinds,
-    requireEvidence,
-    maxDepth,
+    options: {
+      allowedKinds,
+      requireEvidence,
+      maxDepth,
+      direction: check.direction ?? "outgoing",
+    },
   });
   if (!result) {
     return {
@@ -202,12 +205,25 @@ function evaluatePathExists(
       },
     };
   }
+  if (check.maxRank && result.rank > check.maxRank) {
+    return {
+      passed: false,
+      actual: {
+        nodesResolved: { sequence: counts },
+        path: result.path.map(pathNodeFromStored),
+        edges: result.edges.map(({ edge, direction }) => edgeMetadata(edge, direction)),
+        rank: result.rank,
+        issue: `path rank ${result.rank} exceeds maxRank ${check.maxRank}`,
+      },
+    };
+  }
   return {
     passed: true,
     actual: {
       nodesResolved: { sequence: counts },
       path: result.path.map(pathNodeFromStored),
-      edges: result.edges.map(edgeMetadata),
+      edges: result.edges.map(({ edge, direction }) => edgeMetadata(edge, direction)),
+      rank: result.rank,
     },
   };
 }
@@ -231,13 +247,16 @@ function evaluateNoPath(
   const allowedKinds = check.allowedEdgeKinds;
   const maxDepth = check.maxDepth ?? 4;
   for (const fromNode of fromNodes) {
-    const traversal = breadthFirstSearch({
-      start: fromNode.id,
+    const traversal = findGraphPath({
+      startIds: new Set([fromNode.id]),
       targetIds: toIds,
-      edges,
+      edgeIndex: edges,
       nodeIndex: nodes,
-      allowedKinds,
-      maxDepth,
+      options: {
+        allowedKinds,
+        maxDepth,
+        direction: check.direction ?? "outgoing",
+      },
     });
     if (traversal) {
       return {
@@ -245,8 +264,8 @@ function evaluateNoPath(
         actual: {
           nodesResolved: { from: fromNodes.length, to: toNodes.length },
           path: traversal.path.map(pathNodeFromStored),
-          edges: traversal.edges.map(edgeMetadata),
-          issue: `forbidden path found via ${traversal.edges.map((edge) => edge.kind).join(" -> ")}`,
+          edges: traversal.edges.map(({ edge, direction }) => edgeMetadata(edge, direction)),
+          issue: `forbidden path found via ${traversal.edges.map(({ edge }) => edge.kind).join(" -> ")}`,
         },
       };
     }
@@ -259,138 +278,35 @@ function evaluateNoPath(
   };
 }
 
-interface OrderedPathResult {
-  path: StoredCodeNode[];
-  edges: CodeEdge[];
+interface DirectedEdge {
+  edge: CodeEdge;
+  counterpartId: string;
+  direction: "outgoing" | "incoming";
 }
 
-interface OrderedPathInput {
-  sequence: StoredCodeNode[][];
-  edges: EdgeIndex;
-  nodeIndex: NodeIndex;
-  allowedKinds?: GraphEdgeKind[];
-  requireEvidence?: GraphEvidenceRequirement;
-  maxDepth: number;
-}
-
-function findOrderedPath(input: OrderedPathInput): OrderedPathResult | undefined {
-  const [firstGroup, ...remainingGroups] = input.sequence;
-  for (const startNode of firstGroup) {
-    const result = walkOrderedPath({
-      currentPath: [startNode],
-      currentEdges: [],
-      remaining: remainingGroups,
-      ...input,
-    });
-    if (result) {
-      return result;
-    }
-  }
-  return undefined;
-}
-
-interface OrderedWalkInput extends OrderedPathInput {
-  currentPath: StoredCodeNode[];
-  currentEdges: CodeEdge[];
-  remaining: StoredCodeNode[][];
-}
-
-function walkOrderedPath(input: OrderedWalkInput): OrderedPathResult | undefined {
-  if (input.remaining.length === 0) {
-    return { path: input.currentPath, edges: input.currentEdges };
-  }
-  const [nextGroup, ...rest] = input.remaining;
-  const targetIds = new Set(nextGroup.map((node) => node.id));
-  const current = input.currentPath[input.currentPath.length - 1];
-  const traversal = breadthFirstSearch({
-    start: current.id,
-    targetIds,
-    edges: input.edges,
-    nodeIndex: input.nodeIndex,
-    allowedKinds: input.allowedKinds,
-    requireEvidence: input.requireEvidence,
-    maxDepth: input.maxDepth,
-    forbidIds: new Set(input.currentPath.slice(0, -1).map((node) => node.id)),
-  });
-  if (!traversal) {
-    return undefined;
-  }
-  const mergedPath = [...input.currentPath, ...traversal.path.slice(1)];
-  const mergedEdges = [...input.currentEdges, ...traversal.edges];
-  return walkOrderedPath({
-    ...input,
-    currentPath: mergedPath,
-    currentEdges: mergedEdges,
-    remaining: rest,
-  });
-}
-
-interface BfsInput {
-  start: string;
-  targetIds: Set<string>;
-  edges: EdgeIndex;
-  nodeIndex: NodeIndex;
-  allowedKinds?: GraphEdgeKind[];
-  requireEvidence?: GraphEvidenceRequirement;
-  maxDepth: number;
-  forbidIds?: Set<string>;
-}
-
-interface BfsResult {
-  path: StoredCodeNode[];
-  edges: CodeEdge[];
-}
-
-function breadthFirstSearch(input: BfsInput): BfsResult | undefined {
-  const startNode = input.nodeIndex.byId.get(input.start);
-  if (!startNode) {
-    return undefined;
-  }
-  if (input.targetIds.has(input.start)) {
-    return { path: [startNode], edges: [] };
-  }
-  interface QueueEntry {
-    id: string;
-    path: StoredCodeNode[];
-    edges: CodeEdge[];
-  }
-  const queue: QueueEntry[] = [{ id: input.start, path: [startNode], edges: [] }];
-  const visited = new Set<string>([input.start, ...(input.forbidIds ?? [])]);
-  while (queue.length > 0) {
-    const head = queue.shift();
-    if (!head) continue;
-    if (head.edges.length >= input.maxDepth) continue;
-    const outgoing = input.edges.outgoing.get(head.id) ?? [];
-    for (const edge of outgoing) {
-      if (input.allowedKinds && !input.allowedKinds.includes(edge.kind)) continue;
-      if (!evidenceSatisfied(edge.metadata, input.requireEvidence)) continue;
-      if (visited.has(edge.toId)) continue;
-      const nextNode = input.nodeIndex.byId.get(edge.toId);
-      if (!nextNode) continue;
-      const nextPath = [...head.path, nextNode];
-      const nextEdges = [...head.edges, edge];
-      if (input.targetIds.has(edge.toId)) {
-        return { path: nextPath, edges: nextEdges };
-      }
-      visited.add(edge.toId);
-      queue.push({ id: edge.toId, path: nextPath, edges: nextEdges });
-    }
-  }
-  return undefined;
-}
-
-function collectEdges(
+function collectDirectedEdges(
   nodeId: string,
   edges: EdgeIndex,
   direction: "outgoing" | "incoming" | "either",
-): CodeEdge[] {
+): DirectedEdge[] {
   if (direction === "outgoing") {
-    return edges.outgoing.get(nodeId) ?? [];
+    return (edges.outgoing.get(nodeId) ?? []).map((edge) => ({
+      edge,
+      counterpartId: edge.toId,
+      direction: "outgoing" as const,
+    }));
   }
   if (direction === "incoming") {
-    return edges.incoming.get(nodeId) ?? [];
+    return (edges.incoming.get(nodeId) ?? []).map((edge) => ({
+      edge,
+      counterpartId: edge.fromId,
+      direction: "incoming" as const,
+    }));
   }
-  return [...(edges.outgoing.get(nodeId) ?? []), ...(edges.incoming.get(nodeId) ?? [])];
+  return [
+    ...collectDirectedEdges(nodeId, edges, "outgoing"),
+    ...collectDirectedEdges(nodeId, edges, "incoming"),
+  ];
 }
 
 function selectNodes(selector: GraphNodeSelector, nodes: NodeIndex): StoredCodeNode[] {
@@ -410,44 +326,18 @@ function selectNodes(selector: GraphNodeSelector, nodes: NodeIndex): StoredCodeN
   return matches;
 }
 
-function evidenceSatisfied(
-  metadata: Record<string, unknown>,
-  requirement: GraphEvidenceRequirement | undefined,
-): boolean {
-  if (!requirement) return true;
-  const sources = collectEvidenceSources(metadata);
-  if (typeof requirement === "boolean") {
-    return requirement ? sources.length > 0 : true;
-  }
-  if ("anyOf" in requirement) {
-    return requirement.anyOf.some((source) => sources.includes(source));
-  }
-  return requirement.allOf.every((source) => sources.includes(source));
-}
-
-function collectEvidenceSources(metadata: Record<string, unknown>): string[] {
-  const sources = new Set<string>();
-  const raw = metadata.evidenceSources;
-  if (Array.isArray(raw)) {
-    for (const entry of raw) {
-      if (typeof entry === "string" && entry.length > 0) {
-        sources.add(entry);
-      }
-    }
-  }
-  if (typeof metadata.origin === "string" && metadata.origin.length > 0) {
-    sources.add(metadata.origin);
-  }
-  return [...sources];
-}
-
-function edgeMetadata(edge: CodeEdge): GraphPathEdgeResult {
+function edgeMetadata(edge: CodeEdge, direction?: "outgoing" | "incoming"): GraphPathEdgeResult {
   return {
     kind: edge.kind,
     evidenceSources: collectEvidenceSources(edge.metadata),
     origin: typeof edge.metadata.origin === "string" ? edge.metadata.origin : undefined,
     confidence:
       typeof edge.metadata.confidence === "string" ? edge.metadata.confidence : undefined,
+    ownerFile: typeof edge.metadata.ownerFile === "string" ? edge.metadata.ownerFile : undefined,
+    range: typeof edge.metadata.range === "object" ? edge.metadata.range : undefined,
+    fallbackReason:
+      typeof edge.metadata.fallbackReason === "string" ? edge.metadata.fallbackReason : undefined,
+    direction,
   };
 }
 
@@ -497,32 +387,11 @@ function defaultFailureClass(checkType: GraphCheck["type"]): EvalFailureClass {
 }
 
 async function buildNodeIndex(store: CodeGraphRepository): Promise<NodeIndex> {
-  const list = await store.getNodes();
-  const byId = new Map<string, StoredCodeNode>();
-  for (const node of list) {
-    byId.set(node.id, node);
-  }
-  return { byId, list };
+  return buildGraphNodeIndex(await store.getNodes()) as TraversalNodeIndex;
 }
 
 async function buildEdgeIndex(store: CodeGraphRepository): Promise<EdgeIndex> {
-  const allEdges = await store.getEdges();
-  const outgoing = new Map<string, CodeEdge[]>();
-  const incoming = new Map<string, CodeEdge[]>();
-  for (const edge of allEdges) {
-    appendToBucket(outgoing, edge.fromId, edge);
-    appendToBucket(incoming, edge.toId, edge);
-  }
-  return { outgoing, incoming };
-}
-
-function appendToBucket(map: Map<string, CodeEdge[]>, key: string, value: CodeEdge): void {
-  const bucket = map.get(key);
-  if (bucket) {
-    bucket.push(value);
-  } else {
-    map.set(key, [value]);
-  }
+  return buildGraphEdgeIndex(await store.getEdges()) as TraversalEdgeIndex;
 }
 
 function compileGlob(pattern: string): RegExp {

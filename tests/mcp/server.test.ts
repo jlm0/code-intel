@@ -28,6 +28,17 @@ describe("MCP stdio server", () => {
       "hash",
       "--json",
     ]);
+    const externalCliRead = await execa("node", [
+      cliPath,
+      "find-symbol",
+      "calculateGivingTotal",
+      "--workspace",
+      fixturePath,
+      "--index-path",
+      indexPath,
+      "--json",
+    ]);
+    expect(JSON.parse(externalCliRead.stdout).results[0].file).toBe("packages/core/src/tithe.ts");
 
     const transport = new StdioClientTransport({
       command: "node",
@@ -77,18 +88,6 @@ describe("MCP stdio server", () => {
       expect(symbolPayload.result.results[0].file).toBe(
         "packages/core/src/tithe.ts",
       );
-
-      const externalCliRead = await execa("node", [
-        cliPath,
-        "find-symbol",
-        "calculateGivingTotal",
-        "--workspace",
-        fixturePath,
-        "--index-path",
-        indexPath,
-        "--json",
-      ]);
-      expect(JSON.parse(externalCliRead.stdout).results[0].file).toBe("packages/core/src/tithe.ts");
 
       const symbolId = symbolPayload.result.results[0].id;
       const overview = await client.callTool({ name: "workspace_overview", arguments: {} });
@@ -162,9 +161,16 @@ describe("MCP stdio server", () => {
           fromId: parseToolText(summarize).result.results[0].id,
           toId: symbolId,
           limit: 10,
+          maxDepth: 4,
+          allowedEdgeKinds: ["CALLS", "REFERENCES"],
+          direction: "outgoing",
         },
       });
-      expect(parseToolText(trace).result.results.map((item: { id: string }) => item.id)).toContain(symbolId);
+      const tracePayload = parseToolText(trace);
+      expect(tracePayload.result.results.map((item: { id: string }) => item.id)).toContain(symbolId);
+      expect(tracePayload.result.results.some((item: { metadata: Record<string, unknown> }) =>
+        Array.isArray(item.metadata.pathEdges),
+      )).toBe(true);
 
       const invalid = await client.callTool({
         name: "find_symbol",

@@ -20,6 +20,7 @@ import {
 } from "../vectors/embedding.js";
 import { discoverWorkspace, type DiscoveredFile } from "../workspace/discovery.js";
 import { embedGraphChunks, type EmbeddableChunkNode } from "./chunk-embeddings.js";
+import { applyFrameworkGraphFacts } from "./framework-graph.js";
 import {
   factsSchemaVersion,
   readActiveIndexFacts,
@@ -399,6 +400,14 @@ async function buildIndexWorkspace(
       fileChunks,
       astSymbolsByFile,
       fileFactsByRelativePath,
+      addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
+        addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
+    });
+    applyFrameworkGraphFacts({
+      workspaceName: workspace.workspaceName,
+      repo,
+      fileNodes,
+      astSymbolsByFile,
       addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
         addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
     });

@@ -6,6 +6,8 @@ export function formatGivingReceipt(name: string, total: number): string {
   return `${name}:${calculateGivingTotal([total])}`;
 }
 
+export const calculateVariableGivingTotal = (amounts: number[]): number => calculateGivingTotal(amounts);
+
 export interface GivingEntry {
   amount: number;
 }

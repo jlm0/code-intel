@@ -36,7 +36,9 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
   registerCommand(program, "callees <symbol>", "Find callees of a symbol.", actions.callees, runtime);
   registerCommand(program, "expand-context <nodeId>", "Expand graph context around a node.", actions.expandContext, runtime);
   registerCommand(program, "get-context <nodeId>", "Return bounded source context for a node.", actions.getContext, runtime);
-  registerCommand(program, "trace-path <fromId> <toId>", "Trace a graph path between two nodes.", actions.tracePath, runtime);
+  registerCommand(program, "trace-path <fromId> <toId>", "Trace a graph path between two nodes.", actions.tracePath, runtime, {
+    addOptions: addTracePathOptions,
+  });
   registerCommand(program, "eval", "Run fixture and proof-of-concept evaluations.", actions.eval, runtime, {
     addOptions: addEvalOptions,
   });
@@ -104,6 +106,8 @@ function normalizeOptions(options: Record<string, unknown>): CliOptions {
     filterPackage: typeof options.filterPackage === "string" ? options.filterPackage : undefined,
     fileKind: typeof options.fileKind === "string" ? options.fileKind : undefined,
     symbolKind: typeof options.symbolKind === "string" ? options.symbolKind : undefined,
+    edgeKind: Array.isArray(options.edgeKind) ? (options.edgeKind.map(String) as CliOptions["edgeKind"]) : undefined,
+    direction: normalizeDirection(options.direction),
     suite: typeof options.suite === "string" ? options.suite : undefined,
     evalPack: typeof options.evalPack === "string" ? options.evalPack : undefined,
     evalCachePath: typeof options.evalCachePath === "string" ? options.evalCachePath : undefined,
@@ -124,6 +128,12 @@ function addEvalOptions(command: Command): void {
     .option("--fetch", "Fetch an on-demand external eval corpus if it is not cached.", false);
 }
 
+function addTracePathOptions(command: Command): void {
+  command
+    .option("--edge-kind <kind...>", "Restrict trace-path traversal to one or more graph edge kinds.")
+    .option("--direction <direction>", "Graph traversal direction: outgoing, incoming, or either.");
+}
+
 function parseInteger(value: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) {
@@ -140,4 +150,14 @@ function boundedOption(value: unknown, max: number, name: string): number | unde
     throw new Error(`Expected --${name} to be at most ${max}, received ${value}`);
   }
   return value;
+}
+
+function normalizeDirection(value: unknown): CliOptions["direction"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "outgoing" || value === "incoming" || value === "either") {
+    return value;
+  }
+  throw new Error(`Expected --direction to be outgoing, incoming, or either, received ${String(value)}`);
 }
