@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@adv/syntax": ["packages/syntax/src/index.ts"],
+      "@adv/syntax/*": ["packages/syntax/src/*"],
+      "@adv/dispatch": ["packages/dispatch/src/index.ts"],
+      "@adv/dispatch/*": ["packages/dispatch/src/*"],
+      "@adv/modules": ["packages/modules/src/index.ts"],
+      "@adv/modules/*": ["packages/modules/src/*"],
+      "@adv/testing": ["packages/testing/src/index.ts"],
+      "@adv/testing/*": ["packages/testing/src/*"]
+    },
+    "experimentalDecorators": false,
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "target": "ES2022"
+  }
+}

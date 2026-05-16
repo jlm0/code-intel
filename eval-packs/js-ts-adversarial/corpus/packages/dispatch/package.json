@@ -1,0 +1,11 @@
+{
+  "name": "@adv/dispatch",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@adv/syntax": "0.0.0"
+  }
+}

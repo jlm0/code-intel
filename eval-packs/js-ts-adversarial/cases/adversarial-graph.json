@@ -1,0 +1,591 @@
+[
+  {
+    "id": "adv.graph.super-call-edge",
+    "name": "ChildService.greet has a CALLS edge to BaseService.greet via super",
+    "gate": {
+      "id": "adv.target.graph.super-call",
+      "status": "target",
+      "capability": "super-call-resolution",
+      "layer": "graph",
+      "description": "`super.greet(prefix)` inside an override must produce a CALLS edge from the override to the parent class's method, with `super-call` evidence and SCIP compiler evidence."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/child-override.ts", "symbol": "greet" },
+      "to": { "file": "packages/dispatch/src/base-service.ts", "symbol": "greet" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "super-call", "tree-sitter-member-call"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.this-call-edge",
+    "name": "SelfDispatcher.start has CALLS edges to its own private methods",
+    "gate": {
+      "id": "adv.target.graph.this-call",
+      "status": "target",
+      "capability": "this-call-resolution",
+      "layer": "graph",
+      "description": "`this.normalize(...)` and `this.prefix(...)` inside the same class must produce CALLS edges to the receiving methods of the same class with `tree-sitter-member-call` + `this-call` evidence."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/self-dispatch.ts", "symbol": "start" },
+      "to": { "file": "packages/dispatch/src/self-dispatch.ts", "symbol": "normalize" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "this-call", "tree-sitter-member-call"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.this-call-edge-prefix",
+    "name": "SelfDispatcher.start has CALLS edge to SelfDispatcher.prefix",
+    "gate": {
+      "id": "adv.target.graph.this-call",
+      "status": "target",
+      "capability": "this-call-resolution",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/self-dispatch.ts", "symbol": "start" },
+      "to": { "file": "packages/dispatch/src/self-dispatch.ts", "symbol": "prefix" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "this-call", "tree-sitter-member-call"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.interface-extends-interface",
+    "name": "Interface extending interface produces an EXTENDS edge",
+    "gate": {
+      "id": "adv.target.graph.interface-extends",
+      "status": "target",
+      "capability": "interface-extends-interface",
+      "layer": "graph",
+      "description": "`interface Timed extends Identified` is a structural relationship that must produce EXTENDS edges in the graph (currently EXTENDS exists in the schema but is only attached to class hierarchies)."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/interface-hierarchy.ts", "symbol": "Timed" },
+      "to": { "file": "packages/dispatch/src/interface-hierarchy.ts", "symbol": "Identified" },
+      "allowedKinds": ["EXTENDS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "type-relationship"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.interface-extends-transitive",
+    "name": "Three-level interface hierarchy is traversable via EXTENDS",
+    "gate": {
+      "id": "adv.target.graph.interface-extends-path",
+      "status": "target",
+      "capability": "interface-hierarchy-traversal",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        { "file": "packages/dispatch/src/interface-hierarchy.ts", "symbol": "Audited" },
+        { "file": "packages/dispatch/src/interface-hierarchy.ts", "symbol": "Timed" },
+        { "file": "packages/dispatch/src/interface-hierarchy.ts", "symbol": "Identified" }
+      ],
+      "allowedEdgeKinds": ["EXTENDS"],
+      "maxDepth": 3,
+      "requireEvidence": { "anyOf": ["scip-typescript", "type-relationship"] }
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "adv.graph.multi-implements",
+    "name": "Class with multiple `implements` produces N IMPLEMENTS edges",
+    "gate": {
+      "id": "adv.target.graph.multi-implements",
+      "status": "target",
+      "capability": "multiple-implements",
+      "layer": "graph",
+      "description": "AuditedRecord implements Audited AND Versioned must produce IMPLEMENTS edges to both interfaces."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/interface-hierarchy.ts", "symbol": "AuditedRecord" },
+      "to": { "file": "packages/dispatch/src/interface-hierarchy.ts", "symbol": "Versioned" },
+      "allowedKinds": ["IMPLEMENTS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "type-relationship"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.type-position-references",
+    "name": "`keyof InlineTypePayload` produces a type-use REFERENCES edge",
+    "gate": {
+      "id": "adv.target.graph.type-position-reference",
+      "status": "target",
+      "capability": "type-position-reference",
+      "layer": "graph",
+      "description": "Type-position uses (`keyof T`, `typeof X`, mapped `T[K]`) must yield REFERENCES edges with `type-use` evidence, not be treated as runtime references."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/conditional-types.ts", "symbol": "PayloadKeys" },
+      "to": { "file": "packages/syntax/src/inline-type.ts", "symbol": "InlineTypePayload" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "allOf": ["type-use"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "adv.graph.enum-member-reference",
+    "name": "Enum member access produces a REFERENCES edge to the member",
+    "gate": {
+      "id": "adv.target.graph.enum-member-reference",
+      "status": "target",
+      "capability": "enum-member-reference",
+      "layer": "graph",
+      "description": "`Severity.Error` must produce a REFERENCES edge to the enum member, not just to the enum container. Required for impact analysis of enum members."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/namespace-consumer.ts", "symbol": "highlightErrors" },
+      "to": { "symbol": "Error", "kind": "Symbol" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "tree-sitter-member-access"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.namespace-member-reference",
+    "name": "TS namespace member call produces a typed CALLS edge",
+    "gate": {
+      "id": "adv.target.graph.namespace-member",
+      "status": "target",
+      "capability": "ts-namespace-member-resolution",
+      "layer": "graph",
+      "description": "`FileStatus.Filters.bySeverity(...)` resolves through nested namespaces to the inner function. The graph must record CALLS from `highlightErrors` to `FileStatus.Filters.bySeverity`."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/namespace-consumer.ts", "symbol": "highlightErrors" },
+      "to": { "file": "packages/syntax/src/namespace-enum.ts", "symbol": "bySeverity" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "tree-sitter-member-call"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.side-effect-import-edge",
+    "name": "Side-effect import has IMPORTS edge with side-effect evidence",
+    "gate": {
+      "id": "adv.target.graph.side-effect-import",
+      "status": "target",
+      "capability": "side-effect-import-edge",
+      "layer": "graph",
+      "description": "`import './polyfills'` must produce an IMPORTS edge with `side-effect` evidence and MUST NOT produce a CALLS edge (no callable was named)."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/modules/src/side-effect-host.ts", "kind": "File" },
+      "to": { "file": "packages/modules/src/polyfills.ts", "kind": "File" },
+      "allowedKinds": ["IMPORTS"],
+      "requireEvidence": { "allOf": ["side-effect"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "adv.graph.side-effect-no-calls",
+    "name": "Side-effect import does NOT create a CALLS edge",
+    "gate": {
+      "id": "adv.target.graph.side-effect-no-calls",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph",
+      "description": "Importing a module for its side effects only must not produce a phantom CALLS edge."
+    },
+    "check": {
+      "type": "no-edge",
+      "from": { "file": "packages/modules/src/side-effect-host.ts", "kind": "File" },
+      "to": { "file": "packages/modules/src/polyfills.ts", "kind": "File" },
+      "allowedKinds": ["CALLS"]
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.multi-hop-barrel-traversal",
+    "name": "Multi-hop barrel chain reaches the originating symbol via CALLS",
+    "gate": {
+      "id": "adv.target.graph.multi-hop-barrel",
+      "status": "target",
+      "capability": "multi-hop-barrel-resolution",
+      "layer": "graph",
+      "description": "A 4-hop re-export chain (a → b → c → d) must let CALLS reach the originating function. The graph must preserve package-boundary evidence at the original hop."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/modules/src/multi-hop-consumer.ts", "symbol": "consumeMultiHop" },
+      "to": { "file": "packages/modules/src/multi-hop/level-d.ts", "symbol": "multiHopFinal" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "module-resolution"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.cyclic-reexport-bounded",
+    "name": "Cyclic re-export does NOT create a same-symbol loop edge",
+    "gate": {
+      "id": "adv.target.graph.cyclic-reexport",
+      "status": "target",
+      "capability": "cyclic-reexport-safety",
+      "layer": "graph",
+      "description": "cyclic-a.ts re-exports cyclic-b.cyclicFromB; cyclic-b.ts re-exports cyclic-a.cyclicFromA. The graph must not create an edge from cyclicFromA back to itself through the cycle."
+    },
+    "check": {
+      "type": "no-path",
+      "from": { "file": "packages/modules/src/cyclic-a.ts", "symbol": "cyclicFromA" },
+      "to": { "file": "packages/modules/src/cyclic-a.ts", "symbol": "cyclicFromA" },
+      "allowedEdgeKinds": ["EXPORTS", "IMPORTS", "REFERENCES", "CALLS"],
+      "maxDepth": 4
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "adv.graph.bind-call-apply-targets-original",
+    "name": "bind/call/apply CALLS resolve to the original function, not the wrapper method",
+    "gate": {
+      "id": "adv.target.graph.bind-call-apply",
+      "status": "target",
+      "capability": "bind-call-apply-target",
+      "layer": "graph",
+      "description": "`multiply.bind(...)`, `multiply.call(...)`, `multiply.apply(...)` must let the graph create a CALLS edge to `multiply`, not to `bind/call/apply`."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/bind-call-apply.ts", "symbol": "callInvoker" },
+      "to": { "file": "packages/dispatch/src/bind-call-apply.ts", "symbol": "multiply" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "bind-call-apply", "tree-sitter-member-call"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.bind-call-apply-no-callmethod-false-positive",
+    "name": "bind/call/apply does NOT produce a CALLS edge to a `call`-named user symbol elsewhere",
+    "gate": {
+      "id": "adv.target.graph.bind-call-apply-fp",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph",
+      "description": "Fixture client has `receipt.create` — bind/call/apply naming should not be confused with user-defined `call` or `apply` methods."
+    },
+    "check": {
+      "type": "no-edge",
+      "from": { "file": "packages/dispatch/src/bind-call-apply.ts", "symbol": "callInvoker" },
+      "to": { "file": "packages/dispatch/src/discriminated.ts", "symbol": "describe" },
+      "allowedKinds": ["CALLS"]
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.tagged-template-calls-tag",
+    "name": "Tagged template literal creates a CALLS edge to the tag function",
+    "gate": {
+      "id": "adv.target.graph.tagged-template",
+      "status": "target",
+      "capability": "tagged-template-call",
+      "layer": "graph",
+      "description": "html`...` and sqlTemplate`...` must produce CALLS edges from `runTagged`/`buildQuery` to the tag functions, with tagged-template evidence."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/tagged-templates.ts", "symbol": "runTagged" },
+      "to": { "file": "packages/dispatch/src/tagged-templates.ts", "symbol": "html" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "tagged-template", "tree-sitter-call"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.generic-instantiation-references-type-arg",
+    "name": "Generic instantiation produces type-arg REFERENCES edges",
+    "gate": {
+      "id": "adv.target.graph.generic-instantiation",
+      "status": "target",
+      "capability": "generic-type-arg-reference",
+      "layer": "graph",
+      "description": "`new Repository<InlineTypePayload>()` must REFERENCE both Repository AND InlineTypePayload. Today only Repository likely shows up."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/generics-consumer.ts", "kind": "File" },
+      "to": { "file": "packages/syntax/src/inline-type.ts", "symbol": "InlineTypePayload" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "type-use", "module-resolution"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "adv.graph.anonymous-default-symbol-reachable",
+    "name": "Anonymous default export is reachable via EXPORTS edge from default-reexport",
+    "gate": {
+      "id": "adv.target.graph.anonymous-default",
+      "status": "target",
+      "capability": "anonymous-default-symbol",
+      "layer": "graph",
+      "description": "`export { default } from './anonymous-default'` must resolve to the synthesized default symbol in anonymous-default.ts. The graph must let traversal cross this boundary."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        { "file": "packages/modules/src/default-reexport.ts" },
+        { "file": "packages/modules/src/anonymous-default.ts" }
+      ],
+      "allowedEdgeKinds": ["EXPORTS", "REFERENCES", "IMPORTS"],
+      "maxDepth": 2,
+      "requireEvidence": { "anyOf": ["module-resolution", "tree-sitter-export-resolution"] }
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "adv.graph.ambient-module-import-resolves",
+    "name": "Imports of an ambient module declared in a .d.ts file resolve to the ambient module",
+    "gate": {
+      "id": "adv.target.graph.ambient-resolution",
+      "status": "target",
+      "capability": "ambient-module-resolution",
+      "layer": "graph",
+      "description": "`import { untypedHelper } from 'untyped-helper'` matches an ambient `declare module 'untyped-helper'` in ambient.d.ts. The graph must produce an IMPORTS edge that targets the ambient module declaration."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/ambient-consumer.ts", "kind": "File" },
+      "to": { "symbol": "untyped-helper", "kind": "Symbol" },
+      "allowedKinds": ["IMPORTS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "ambient-module", "module-resolution"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.conditional-exports-import-resolves",
+    "name": "Conditional exports (`import` / `require`) resolve from a subpath specifier",
+    "gate": {
+      "id": "adv.target.graph.conditional-exports",
+      "status": "target",
+      "capability": "conditional-exports-resolution",
+      "layer": "fusion",
+      "description": "`@adv/modules/dual` declares conditional exports with `import`, `require`, and `types`. An ESM consumer must resolve to esm-entry.ts. The graph must express this resolution as IMPORTS evidence."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/modules/src/index.ts", "kind": "File" },
+      "to": { "file": "packages/modules/src/esm-entry.ts", "kind": "File" },
+      "allowedKinds": ["IMPORTS", "EXPORTS"],
+      "requireEvidence": { "anyOf": ["module-resolution", "conditional-exports"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.dynamic-template-unresolved-marked",
+    "name": "Dynamic-template import is marked unresolved-dynamic rather than guessed",
+    "gate": {
+      "id": "adv.target.graph.dynamic-template-unresolved",
+      "status": "target",
+      "capability": "dynamic-import-unresolved-marking",
+      "layer": "fusion",
+      "description": "`import(\\`./locales/${lang}\\`)` cannot be statically resolved. The graph must record this as an unresolved-dynamic IMPORTS edge with explicit fallback reason rather than guessing a target."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/modules/src/dynamic-template.ts", "kind": "File" },
+      "to": { "symbol": "./locales/${lang}.ts", "kind": "Module" },
+      "allowedKinds": ["IMPORTS"],
+      "requireEvidence": { "allOf": ["dynamic-template", "unresolved"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "adv.graph.test-linking-mock-edge",
+    "name": "vi.mock creates a TESTS edge to the mocked module with mock evidence",
+    "gate": {
+      "id": "adv.target.test-linking.mock",
+      "status": "target",
+      "capability": "mock-derived-test-link",
+      "layer": "test-linking",
+      "description": "`vi.mock('../mocked-target', ...)` is strong evidence that the test exercises mocked-target. A TESTS edge with `mock` evidence must be created."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/testing/src/__tests__/mocked.test.ts", "kind": "Test" },
+      "to": { "file": "packages/testing/src/mocked-target.ts", "symbol": "mockedTarget" },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": { "allOf": ["mock", "tree-sitter-test"] }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "adv.graph.test-linking-snapshot-evidence",
+    "name": "Snapshot tests carry snapshot evidence on the TESTS edge",
+    "gate": {
+      "id": "adv.target.test-linking.snapshot",
+      "status": "target",
+      "capability": "snapshot-test-evidence",
+      "layer": "test-linking",
+      "description": "Tests that call `toMatchSnapshot` should carry `snapshot` evidence on the TESTS edge so callers of the implementation can find snapshot-only coverage."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/testing/src/__tests__/snapshot.test.ts", "kind": "Test" },
+      "to": { "file": "packages/testing/src/snapshot-target.ts", "symbol": "snapshotTarget" },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": { "allOf": ["snapshot", "tree-sitter-test"] }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "adv.graph.test-linking-spec-suffix",
+    "name": "*.spec.ts files participate in test-linking like *.test.ts",
+    "gate": {
+      "id": "adv.target.test-linking.spec",
+      "status": "target",
+      "capability": "spec-suffix-recognition",
+      "layer": "test-linking",
+      "description": "parameterized.spec.ts imports snapshot-target. The graph must produce a TESTS edge from the spec file to snapshot-target.snapshotTarget."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/testing/src/parameterized.spec.ts", "kind": "Test" },
+      "to": { "file": "packages/testing/src/snapshot-target.ts", "symbol": "snapshotTarget" },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": { "anyOf": ["tree-sitter-test", "module-resolution"] }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "adv.graph.test-linking-orphan-mock-no-edge",
+    "name": "vi.mock to a non-existent specifier must not create a TESTS edge",
+    "gate": {
+      "id": "adv.target.test-linking.orphan-mock-false-positive",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "test-linking",
+      "description": "orphan-mock.test.ts mocks `./nonexistent-target` which does not exist. The graph must not invent a phantom node or TESTS edge."
+    },
+    "check": {
+      "type": "no-edge",
+      "from": { "file": "packages/testing/src/orphan-mock.test.ts", "kind": "Test" },
+      "to": { "file": "packages/testing/src/mocked-target.ts", "symbol": "mockedTarget" },
+      "allowedKinds": ["TESTS"]
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "adv.graph.test-linking-storybook-not-tests",
+    "name": "Storybook stories do NOT create TESTS edges",
+    "gate": {
+      "id": "adv.target.test-linking.storybook-not-tests",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "test-linking",
+      "description": "Storybook stories are not unit tests. The graph must not produce TESTS edges from .stories.tsx files to the components they render."
+    },
+    "check": {
+      "type": "no-edge",
+      "from": { "file": "packages/testing/src/story-component.stories.tsx", "kind": "File" },
+      "to": { "file": "packages/testing/src/story-component.tsx", "symbol": "StoryComponent" },
+      "allowedKinds": ["TESTS"]
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "adv.graph.test-linking-storybook-references",
+    "name": "Storybook stories reference the component via REFERENCES, not TESTS",
+    "gate": {
+      "id": "adv.target.test-linking.storybook-references",
+      "status": "target",
+      "capability": "storybook-component-reference",
+      "layer": "graph",
+      "description": "The story file imports and uses StoryComponent. The graph should produce a REFERENCES edge (or IMPORTS) but not a TESTS edge."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/testing/src/story-component.stories.tsx", "kind": "File" },
+      "to": { "file": "packages/testing/src/story-component.tsx", "symbol": "StoryComponent" },
+      "allowedKinds": ["REFERENCES", "IMPORTS"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "module-resolution"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.package-depends-on",
+    "name": "DEPENDS_ON edge from @adv/dispatch to @adv/syntax exists from package.json deps",
+    "gate": {
+      "id": "adv.target.graph.package-depends-on",
+      "status": "target",
+      "capability": "package-dependency-edges",
+      "layer": "graph",
+      "description": "package.json `dependencies` should produce DEPENDS_ON edges between Package nodes. dispatch depends on syntax."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "symbol": "@adv/dispatch", "kind": "Package" },
+      "to": { "symbol": "@adv/syntax", "kind": "Package" },
+      "allowedKinds": ["DEPENDS_ON"],
+      "requireEvidence": { "allOf": ["package-json"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "adv.graph.no-package-bridge",
+    "name": "Cross-package paths must not route through Package nodes accidentally",
+    "gate": {
+      "id": "adv.target.graph.no-package-bridge",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph",
+      "description": "Test that consumeInlineTypePayload (syntax) is not accidentally connected to multiply (dispatch) through Package:@adv/syntax → Package:@adv/dispatch bridge."
+    },
+    "check": {
+      "type": "no-path",
+      "from": { "file": "packages/syntax/src/inline-type-consumer.ts", "symbol": "consumeInlineTypePayload" },
+      "to": { "file": "packages/dispatch/src/bind-call-apply.ts", "symbol": "multiply" },
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "maxDepth": 4
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "adv.graph.discriminated-union-narrowing",
+    "name": "Discriminated union narrowing produces typed REFERENCES to each variant",
+    "gate": {
+      "id": "adv.target.graph.discriminated-union",
+      "status": "scoreboard",
+      "capability": "discriminated-union-references",
+      "layer": "graph",
+      "description": "`result.kind === 'success'` should reference Success<T>; `result.kind === 'failure'` should reference Failure. This is type-narrowing precision — likely a long-tail target."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/dispatch/src/discriminated.ts", "symbol": "describe" },
+      "to": { "file": "packages/dispatch/src/discriminated.ts", "symbol": "Failure" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "anyOf": ["scip-typescript", "discriminated-union"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "adv.graph.recursive-type-no-self-loop",
+    "name": "Recursive type definition does not create a self-loop REFERENCES edge",
+    "gate": {
+      "id": "adv.target.graph.recursive-type",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph",
+      "description": "TreeNode references TreeNode in its own definition. The graph must not produce a self-loop REFERENCES edge (or if it does, it must be marked `self-reference`)."
+    },
+    "check": {
+      "type": "no-edge",
+      "from": { "file": "packages/syntax/src/recursive.ts", "symbol": "TreeNode" },
+      "to": { "file": "packages/syntax/src/recursive.ts", "symbol": "TreeNode" },
+      "allowedKinds": ["REFERENCES"]
+    },
+    "failureClassHint": "graph-edge"
+  }
+]
