@@ -1,8 +1,0 @@
-{
-  "name": "@fixture/legacy",
-  "version": "0.0.0",
-  "type": "module",
-  "exports": {
-    ".": "./src/legacy.js"
-  }
-}
