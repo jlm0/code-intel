@@ -10,5 +10,6 @@
     "path": "corpus",
     "repoPaths": ["."]
   },
-  "caseFiles": ["cases/mechanical-correctness.json"]
+  "caseFiles": ["cases/mechanical-correctness.json"],
+  "graphCaseFiles": ["cases/graph-paths.json"]
 }

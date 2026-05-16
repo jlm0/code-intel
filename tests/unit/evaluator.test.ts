@@ -109,4 +109,24 @@ describe("runEvalSuite", () => {
       ]),
     );
   });
+
+  it("loads graph-specific Rallly target gates", async () => {
+    const loadedPack = await loadEvalPack({
+      suite: "oss-rallly-app-flow",
+      workspaceRoot: process.cwd(),
+    });
+    const graphCases = (loadedPack as unknown as {
+      graphCases?: Array<{ id: string; gate: { status: string; layer: string } }>;
+    }).graphCases;
+
+    expect(graphCases?.map((testCase) => testCase.id)).toEqual([
+      "rallly.graph.route-mutation-database-typed-path",
+      "rallly.graph.middleware-to-route-usage-path",
+      "rallly.graph-ui-to-private-api-path",
+      "rallly.graph-test-to-implementation-evidence-path",
+      "rallly.graph-no-mention-only-billing-flow",
+    ]);
+    expect(graphCases?.every((testCase) => testCase.gate.status === "target")).toBe(true);
+    expect(graphCases?.every((testCase) => testCase.gate.layer === "graph")).toBe(true);
+  });
 });

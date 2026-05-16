@@ -33,5 +33,6 @@
     ]
   },
   "caseFiles": ["cases/app-flow.json"],
-  "astCaseFiles": ["cases/ast-facts.json"]
+  "astCaseFiles": ["cases/ast-facts.json"],
+  "graphCaseFiles": ["cases/graph-paths.json"]
 }

@@ -49,6 +49,10 @@ export class QueryEngine {
     await this.store.close();
   }
 
+  getRepository(): CodeGraphRepository {
+    return this.store;
+  }
+
   async findSymbol(name: string, options: QueryLimitOptions): Promise<QueryResult> {
     const nodes = await this.store.findSymbols(name, options.limit);
     return parseQueryResult({

@@ -1,0 +1,139 @@
+[
+  {
+    "id": "rallly.graph.route-mutation-database-typed-path",
+    "name": "Create poll route reaches mutation and database through typed edges",
+    "gate": {
+      "id": "rallly.target.graph-typed-app-flow",
+      "status": "target",
+      "capability": "route-to-mutation-to-database",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/api/src/routes/polls.ts"
+        },
+        {
+          "file": "packages/api-core/src/polls/mutations.ts",
+          "symbol": "createPoll"
+        },
+        {
+          "file": "packages/database/src/client.ts",
+          "symbol": "prisma"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS"],
+      "maxDepth": 3,
+      "requireEvidence": {
+        "allOf": ["scip-typescript"]
+      }
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "rallly.graph.middleware-to-route-usage-path",
+    "name": "API middleware traces to route usage with evidence",
+    "gate": {
+      "id": "rallly.target.graph-middleware-usage",
+      "status": "target",
+      "capability": "middleware-to-route",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/api/src/middleware/api-key.ts",
+          "symbol": "spaceApiKeyAuth"
+        },
+        {
+          "file": "apps/api/src/routes/polls.ts"
+        }
+      ],
+      "allowedEdgeKinds": ["REFERENCES", "CALLS", "IMPORTS"],
+      "maxDepth": 2,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "rallly.graph-ui-to-private-api-path",
+    "name": "Web UI poll page traces to private API route",
+    "gate": {
+      "id": "rallly.target.graph-ui-to-api",
+      "status": "target",
+      "capability": "UI-to-data/API",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/page.tsx"
+        },
+        {
+          "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page-loader.tsx",
+          "symbol": "AdminPageLoader"
+        },
+        {
+          "file": "apps/web/src/app/api/private/[...route]/route.ts"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "rallly.graph-test-to-implementation-evidence-path",
+    "name": "Private API test traces to implementation route with test evidence",
+    "gate": {
+      "id": "rallly.target.graph-test-coverage",
+      "status": "target",
+      "capability": "test-to-implementation",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/src/app/api/private/[...route]/route.test.ts"
+        },
+        {
+          "file": "apps/web/src/app/api/private/[...route]/route.ts",
+          "symbol": "app"
+        }
+      ],
+      "allowedEdgeKinds": ["TESTS"],
+      "maxDepth": 2,
+      "requireEvidence": {
+        "anyOf": ["scip-typescript", "tree-sitter-test"]
+      }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "rallly.graph-no-mention-only-billing-flow",
+    "name": "Create poll route should not connect to billing through mention-only app-flow path",
+    "gate": {
+      "id": "rallly.target.graph-false-positive",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "no-path",
+      "from": {
+        "file": "apps/api/src/routes/polls.ts"
+      },
+      "to": {
+        "file": "packages/billing/src/**"
+      },
+      "allowedEdgeKinds": ["MENTIONS"],
+      "maxDepth": 3
+    },
+    "failureClassHint": "graph-edge"
+  }
+]

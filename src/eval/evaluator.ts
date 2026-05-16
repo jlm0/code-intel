@@ -16,8 +16,13 @@ import {
   type PreparedEvalCorpus,
 } from "./eval-pack.js";
 import { runAstEvalCase } from "./ast-case.js";
+import { runGraphEvalCase } from "./graph-case.js";
 import { runEvalCase } from "./query-case.js";
-import type { AstEvalCaseResult, EvalCaseResult } from "./results.js";
+import type {
+  AstEvalCaseResult,
+  EvalCaseResult,
+  GraphEvalCaseResult,
+} from "./results.js";
 import { summarizeEvalResults, type EvalReportSummary } from "./report-summary.js";
 
 export interface EvalOptions {
@@ -61,6 +66,7 @@ export interface EvalReport {
   summary: EvalReportSummary;
   cases: EvalCaseResult[];
   astCases: AstEvalCaseResult[];
+  graphCases: GraphEvalCaseResult[];
 }
 
 export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalReport> {
@@ -95,7 +101,11 @@ export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalRepor
       for (const testCase of loadedPack.astCases) {
         astCases.push(await runAstEvalCase(testCase, corpus));
       }
-      const summary = summarizeEvalResults([...cases, ...astCases]);
+      const graphCases: GraphEvalCaseResult[] = [];
+      for (const testCase of loadedPack.graphCases) {
+        graphCases.push(await runGraphEvalCase(testCase, engine.getRepository()));
+      }
+      const summary = summarizeEvalResults([...cases, ...astCases, ...graphCases]);
 
       return {
         schemaVersion,
@@ -119,6 +129,7 @@ export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalRepor
         summary,
         cases,
         astCases,
+        graphCases,
       };
     } finally {
       await engine.close();

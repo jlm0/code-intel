@@ -42,6 +42,7 @@ const EvalPackSchema = z.object({
   corpus: EvalCorpusSchema,
   caseFiles: z.array(z.string().min(1)).min(1),
   astCaseFiles: z.array(z.string().min(1)).default([]),
+  graphCaseFiles: z.array(z.string().min(1)).default([]),
 });
 
 const EvalGateMetadataSchema = z.object({
@@ -78,6 +79,94 @@ const EvalCaseSchema = z.object({
     "query",
     "ranking",
     "app-flow",
+    "graph-edge",
+    "graph-traversal",
+    "graph-ranking",
+    "graph-evidence",
+  ]).optional(),
+});
+
+const GraphEdgeKindSchema = z.enum([
+  "CONTAINS",
+  "DEFINES",
+  "IMPORTS",
+  "EXPORTS",
+  "REFERENCES",
+  "CALLS",
+  "EXTENDS",
+  "IMPLEMENTS",
+  "DEPENDS_ON",
+  "HAS_CHUNK",
+  "TESTS",
+  "MENTIONS",
+]);
+
+const GraphNodeSelectorSchema = z.object({
+  file: z.string().min(1).optional(),
+  symbol: z.string().min(1).optional(),
+  kind: z.string().min(1).optional(),
+}).refine(
+  (selector) => Boolean(selector.file ?? selector.symbol ?? selector.kind),
+  { message: "Graph node selector requires at least one of file, symbol, or kind" },
+);
+
+const GraphEvidenceRequirementSchema = z.union([
+  z.boolean(),
+  z.object({ anyOf: z.array(z.string().min(1)).min(1) }),
+  z.object({ allOf: z.array(z.string().min(1)).min(1) }),
+]);
+
+const GraphEdgeExistsCheckSchema = z.object({
+  type: z.literal("edge-exists"),
+  from: GraphNodeSelectorSchema,
+  to: GraphNodeSelectorSchema,
+  allowedKinds: z.array(GraphEdgeKindSchema).min(1).optional(),
+  direction: z.enum(["outgoing", "incoming", "either"]).default("outgoing"),
+  requireEvidence: GraphEvidenceRequirementSchema.optional(),
+});
+
+const GraphNoEdgeCheckSchema = z.object({
+  type: z.literal("no-edge"),
+  from: GraphNodeSelectorSchema,
+  to: GraphNodeSelectorSchema,
+  allowedKinds: z.array(GraphEdgeKindSchema).min(1).optional(),
+  direction: z.enum(["outgoing", "incoming", "either"]).default("outgoing"),
+});
+
+const GraphPathExistsCheckSchema = z.object({
+  type: z.literal("path-exists"),
+  nodes: z.array(GraphNodeSelectorSchema).min(2),
+  allowedEdgeKinds: z.array(GraphEdgeKindSchema).min(1).optional(),
+  maxDepth: z.number().int().min(1).max(8).default(4),
+  maxRank: z.number().int().min(1).optional(),
+  requireEvidence: GraphEvidenceRequirementSchema.optional(),
+});
+
+const GraphNoPathCheckSchema = z.object({
+  type: z.literal("no-path"),
+  from: GraphNodeSelectorSchema,
+  to: GraphNodeSelectorSchema,
+  allowedEdgeKinds: z.array(GraphEdgeKindSchema).min(1).optional(),
+  maxDepth: z.number().int().min(1).max(8).default(4),
+});
+
+const GraphCheckSchema = z.discriminatedUnion("type", [
+  GraphEdgeExistsCheckSchema,
+  GraphNoEdgeCheckSchema,
+  GraphPathExistsCheckSchema,
+  GraphNoPathCheckSchema,
+]);
+
+const GraphEvalCaseSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  gate: EvalGateMetadataSchema.default(defaultEvalGate),
+  check: GraphCheckSchema,
+  failureClassHint: z.enum([
+    "graph-edge",
+    "graph-traversal",
+    "graph-ranking",
+    "graph-evidence",
   ]).optional(),
 });
 
@@ -108,6 +197,11 @@ export type EvalCase = z.infer<typeof EvalCaseSchema>;
 export type EvalExpectation = z.infer<typeof EvalExpectationSchema>;
 export type EvalFailureClass = NonNullable<EvalCase["failureClassHint"]> | "unknown";
 export type AstEvalCase = z.infer<typeof AstEvalCaseSchema>;
+export type GraphEvalCase = z.infer<typeof GraphEvalCaseSchema>;
+export type GraphCheck = z.infer<typeof GraphCheckSchema>;
+export type GraphNodeSelector = z.infer<typeof GraphNodeSelectorSchema>;
+export type GraphEvidenceRequirement = z.infer<typeof GraphEvidenceRequirementSchema>;
+export type GraphEdgeKind = z.infer<typeof GraphEdgeKindSchema>;
 
 export interface ResolveEvalPackInput {
   suite?: string;
@@ -133,6 +227,7 @@ export interface LoadedEvalPack {
   packRoot: string;
   cases: EvalCase[];
   astCases: AstEvalCase[];
+  graphCases: GraphEvalCase[];
 }
 
 export interface PrepareEvalCorpusInput {
@@ -156,12 +251,18 @@ export async function loadEvalPack(input: ResolveEvalPackInput): Promise<LoadedE
       z.array(AstEvalCaseSchema).parse(JSON.parse(await readFile(resolve(packRoot, caseFile), "utf8"))),
     ),
   );
+  const graphCaseGroups = await Promise.all(
+    pack.graphCaseFiles.map(async (caseFile) =>
+      z.array(GraphEvalCaseSchema).parse(JSON.parse(await readFile(resolve(packRoot, caseFile), "utf8"))),
+    ),
+  );
   return {
     pack,
     packPath,
     packRoot,
     cases: caseGroups.flat(),
     astCases: astCaseGroups.flat(),
+    graphCases: graphCaseGroups.flat(),
   };
 }
 
