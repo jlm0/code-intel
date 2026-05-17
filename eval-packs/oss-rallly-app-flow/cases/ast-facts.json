@@ -1,0 +1,266 @@
+[
+  {
+    "id": "rallly.ast.api-route",
+    "name": "API route AST facts",
+    "file": "apps/api/src/routes/polls.ts",
+    "gate": {
+      "id": "rallly.required.ast-route-to-mutation",
+      "status": "required",
+      "capability": "route-to-mutation",
+      "layer": "AST"
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@rallly/api-core/polls/mutations",
+          "importedName": "createPoll",
+          "localName": "createPoll",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "../middleware/api-key",
+          "importedName": "spaceApiKeyAuth",
+          "localName": "spaceApiKeyAuth",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "polls",
+          "kind": "Variable",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "post",
+          "memberPath": "app.post",
+          "callKind": "member"
+        },
+        {
+          "name": "createPoll",
+          "callKind": "function"
+        }
+      ]
+    }
+  },
+  {
+    "id": "rallly.ast.api-mutation",
+    "name": "API mutation AST facts",
+    "file": "packages/api-core/src/polls/mutations.ts",
+    "gate": {
+      "id": "rallly.required.ast-mutation-to-database",
+      "status": "required",
+      "capability": "mutation-to-database",
+      "layer": "AST"
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@rallly/database",
+          "importedName": "prisma",
+          "localName": "prisma",
+          "importKind": "value"
+        }
+      ],
+      "exports": [
+        {
+          "exportedName": "createPoll",
+          "exportKind": "local"
+        },
+        {
+          "exportedName": "deletePoll",
+          "exportKind": "local"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "createPoll",
+          "kind": "VariableFunction",
+          "exported": true
+        },
+        {
+          "qualifiedName": "deletePoll",
+          "kind": "VariableFunction",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "create",
+          "memberPath": "prisma.poll.create",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "rallly.ast.database-client",
+    "name": "Database client AST facts",
+    "file": "packages/database/src/client.ts",
+    "gate": {
+      "id": "rallly.required.ast-mutation-to-database",
+      "status": "required",
+      "capability": "mutation-to-database",
+      "layer": "AST"
+    },
+    "expected": {
+      "exports": [
+        {
+          "exportedName": "prisma",
+          "exportKind": "local"
+        },
+        {
+          "exportedName": "default",
+          "localName": "prisma",
+          "exportKind": "default"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "prisma",
+          "kind": "Variable",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "PrismaClient",
+          "callKind": "constructor"
+        },
+        {
+          "name": "PrismaPg",
+          "callKind": "constructor"
+        }
+      ]
+    }
+  },
+  {
+    "id": "rallly.ast.web-ui-loader",
+    "name": "Web UI loader AST facts",
+    "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page-loader.tsx",
+    "gate": {
+      "id": "rallly.required.ast-ui-to-data-api",
+      "status": "required",
+      "capability": "UI-to-data/API",
+      "layer": "AST"
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "next/dynamic",
+          "importedName": "default",
+          "localName": "dynamic",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "./admin-page",
+          "importKind": "dynamic"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "AdminPageLoader",
+          "kind": "Function",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "PollBrandingFromContext",
+          "callKind": "jsx"
+        },
+        {
+          "name": "AdminPage",
+          "callKind": "jsx"
+        }
+      ]
+    }
+  },
+  {
+    "id": "rallly.ast.middleware",
+    "name": "Middleware AST facts",
+    "file": "apps/api/src/middleware/api-key.ts",
+    "gate": {
+      "id": "rallly.required.ast-middleware-to-route",
+      "status": "required",
+      "capability": "middleware-to-route",
+      "layer": "AST"
+    },
+    "expected": {
+      "exports": [
+        {
+          "exportedName": "spaceApiKeyAuth",
+          "exportKind": "local"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "spaceApiKeyAuth",
+          "kind": "Variable",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "bearerAuth",
+          "callKind": "function"
+        },
+        {
+          "name": "timingSafeEqual",
+          "memberPath": "crypto.timingSafeEqual",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "rallly.ast.private-api-test",
+    "name": "Private API test AST facts",
+    "file": "apps/web/src/app/api/private/[...route]/route.test.ts",
+    "gate": {
+      "id": "rallly.required.ast-test-to-implementation",
+      "status": "required",
+      "capability": "test-to-implementation",
+      "layer": "AST"
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "vitest",
+          "importedName": "describe",
+          "localName": "describe",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "./route",
+          "importedName": "app",
+          "localName": "app",
+          "importKind": "value"
+        }
+      ],
+      "testCases": [
+        {
+          "title": "Private API - /polls",
+          "kind": "Suite"
+        },
+        {
+          "title": "should create a poll with date options",
+          "kind": "Test"
+        }
+      ],
+      "calls": [
+        {
+          "name": "mock",
+          "memberPath": "vi.mock",
+          "callKind": "member"
+        },
+        {
+          "name": "request",
+          "memberPath": "app.request",
+          "callKind": "member"
+        }
+      ]
+    }
+  }
+]
