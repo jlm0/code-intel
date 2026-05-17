@@ -1,0 +1,83 @@
+[
+  {
+    "id": "hermes.query.gateway-client-symbol",
+    "name": "Find GatewayClient implementation",
+    "mode": "find-symbol",
+    "query": "GatewayClient",
+    "limit": 20,
+    "gate": {
+      "id": "hermes.target.symbol-gateway-client",
+      "status": "target",
+      "capability": "gateway-client-protocol",
+      "layer": "SCIP",
+      "description": "Compiler-backed symbol search should prefer the real GatewayClient class over comments and type mentions."
+    },
+    "expected": [
+      {
+        "file": "ui-tui/src/gatewayClient.ts",
+        "symbol": "GatewayClient",
+        "maxRank": 5
+      }
+    ],
+    "notExpected": [
+      {
+        "file": "web/src/components/ChatSidebar.tsx",
+        "symbol": "GatewayClient",
+        "maxRank": 1
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "hermes.query.composer-hook-references",
+    "name": "References to useComposerState include main app hook and tests",
+    "mode": "references",
+    "query": "useComposerState",
+    "limit": 30,
+    "gate": {
+      "id": "hermes.target.references-hook-usage",
+      "status": "target",
+      "capability": "hook-to-hook",
+      "layer": "fusion",
+      "description": "Hook references should include implementation callers and tests without conflating unrelated hook helpers."
+    },
+    "expected": [
+      {
+        "file": "ui-tui/src/app/useMainApp.ts",
+        "maxRank": 15
+      },
+      {
+        "file": "ui-tui/src/__tests__/useComposerState.test.ts",
+        "maxRank": 30
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "hermes.query.tui-gateway-flow",
+    "name": "Semantic query for TUI gateway request flow",
+    "mode": "semantic",
+    "query": "terminal TUI gateway websocket request session create composer hook image attach RPC",
+    "limit": 20,
+    "gate": {
+      "id": "hermes.scoreboard.tui-gateway-ranking",
+      "status": "scoreboard",
+      "capability": "AI-agent TUI gateway flow",
+      "layer": "ranking",
+      "description": "Scoreboard-only retrieval check for a React/Ink TUI-to-gateway-client workflow."
+    },
+    "expected": [
+      {
+        "file": "ui-tui/src/gatewayClient.ts",
+        "symbol": "GatewayClient",
+        "maxRank": 8
+      },
+      {
+        "file": "ui-tui/src/app/useComposerState.ts",
+        "symbol": "useComposerState",
+        "maxRank": 15
+      }
+    ],
+    "failureClassHint": "ranking"
+  }
+]

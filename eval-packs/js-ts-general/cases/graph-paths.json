@@ -1,0 +1,417 @@
+[
+  {
+    "id": "synthetic.graph.path-ui-to-core-export",
+    "name": "UI hook reaches package-exported core function",
+    "gate": {
+      "id": "synthetic.required.graph-paths",
+      "status": "required",
+      "capability": "typed-path-traversal",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "packages/ui/src/useBarrelSummary.tsx",
+          "symbol": "useBarrelSummary"
+        },
+        {
+          "file": "packages/core/src/tithe.ts",
+          "symbol": "calculateGivingTotal"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "maxDepth": 4,
+      "requireEvidence": {
+        "anyOf": ["module-resolution", "tree-sitter-import-resolution", "scip-typescript"]
+      }
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "synthetic.graph.no-duplicate-method-cross-link",
+    "name": "Duplicate method names do not create a forbidden path",
+    "gate": {
+      "id": "synthetic.required.graph-false-positive",
+      "status": "required",
+      "capability": "false-positive-guard",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "no-path",
+      "from": {
+        "file": "packages/core/src/duplicateMethods.ts",
+        "symbol": "render"
+      },
+      "to": {
+        "file": "packages/core/src/tithe.ts",
+        "symbol": "calculateGivingTotal"
+      },
+      "allowedEdgeKinds": ["CALLS", "REFERENCES"],
+      "maxDepth": 3
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.extends-class",
+    "name": "Class inheritance emits EXTENDS edge with compiler evidence",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "type-relationships",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/types.ts",
+        "symbol": "DefaultReceiptWriter"
+      },
+      "to": {
+        "file": "packages/core/src/types.ts",
+        "symbol": "BaseReceiptWriter"
+      },
+      "allowedKinds": ["EXTENDS"],
+      "requireEvidence": {
+        "allOf": ["scip-typescript"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.implements-interface",
+    "name": "Class implementation emits IMPLEMENTS edge with compiler evidence",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "type-relationships",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/types.ts",
+        "symbol": "DefaultReceiptWriter"
+      },
+      "to": {
+        "file": "packages/core/src/types.ts",
+        "symbol": "ReceiptWriter"
+      },
+      "allowedKinds": ["IMPLEMENTS"],
+      "requireEvidence": {
+        "allOf": ["scip-typescript"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.generic-type-use",
+    "name": "Generic type usage emits type-use reference with evidence",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "type-relationships",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/types.ts",
+        "symbol": "createReceiptEnvelope"
+      },
+      "to": {
+        "file": "packages/core/src/types.ts",
+        "symbol": "ReceiptEnvelope"
+      },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": {
+        "allOf": ["scip-typescript", "type-use"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.member-chain-call",
+    "name": "Member-chain call resolves to nested object method",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "member-chain-call",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/clientConsumer.ts",
+        "symbol": "createReceiptViaClient"
+      },
+      "to": {
+        "file": "packages/core/src/client.ts",
+        "symbol": "create"
+      },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": {
+        "allOf": ["module-resolution", "tree-sitter-member-call"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.config-env-reference",
+    "name": "Env config access emits explicit config reference",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "config-env",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/config.ts",
+        "symbol": "readWebhookSecret"
+      },
+      "to": {
+        "symbol": "WEBHOOK_SECRET",
+        "kind": "Symbol"
+      },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": {
+        "allOf": ["tree-sitter-member-access", "config-env"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.property-access",
+    "name": "Member property access emits property-access reference evidence",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "property-access",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/clientConsumer.ts",
+        "symbol": "createReceiptViaClient"
+      },
+      "to": {
+        "file": "packages/core/src/client.ts",
+        "symbol": "create"
+      },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": {
+        "allOf": ["tree-sitter-member-access", "property-access"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.package-boundary-import",
+    "name": "Cross-package import call keeps package-boundary evidence",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "package-boundary",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/ui/src/useBarrelSummary.tsx",
+        "symbol": "useBarrelSummary"
+      },
+      "to": {
+        "file": "packages/core/src/tithe.ts",
+        "symbol": "calculateGivingTotal"
+      },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": {
+        "allOf": ["module-resolution", "package-boundary"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.loader-action",
+    "name": "Framework loader call keeps loader/action convention evidence",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "loader-action",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/ui/src/app/poll/[id]/page.tsx",
+        "symbol": "Page"
+      },
+      "to": {
+        "file": "packages/ui/src/app/poll/[id]/admin-page-loader.tsx",
+        "symbol": "AdminPageLoader"
+      },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": {
+        "allOf": ["loader-action", "framework-convention"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.route-handler",
+    "name": "HTTP route convention emits route-handler relationship evidence",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "route-handler",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/httpRoute.ts",
+        "kind": "File"
+      },
+      "to": {
+        "file": "packages/core/src/httpRoute.ts",
+        "symbol": "receiptRoutes"
+      },
+      "allowedKinds": ["DEFINES"],
+      "requireEvidence": {
+        "allOf": ["route-handler", "framework-convention"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.relationship.api-client",
+    "name": "Runtime API client calls are explicit unresolved callsites",
+    "gate": {
+      "id": "synthetic.required.relationship-graph",
+      "status": "required",
+      "capability": "api-client",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/apiClient.ts",
+        "symbol": "fetchReceipt"
+      },
+      "to": {
+        "file": "packages/core/src/apiClient.ts",
+        "symbol": "fetch",
+        "kind": "Callsite"
+      },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": {
+        "allOf": ["tree-sitter-call", "api-client"]
+      }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "synthetic.test-linking.direct-call-evidence",
+    "name": "Direct test call links test case to implementation symbol",
+    "gate": {
+      "id": "synthetic.required.test-linking",
+      "status": "required",
+      "capability": "test-to-implementation",
+      "layer": "test-linking"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/tithe.test.ts",
+        "kind": "Test"
+      },
+      "to": {
+        "file": "packages/core/src/tithe.ts",
+        "symbol": "calculateGivingTotal"
+      },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": {
+        "allOf": ["tree-sitter-test"]
+      }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "synthetic.test-linking.indirect-call-edge",
+    "name": "Indirect helper call links test to covered implementation",
+    "gate": {
+      "id": "synthetic.required.test-linking",
+      "status": "required",
+      "capability": "test-to-implementation",
+      "layer": "test-linking"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/indirectCoverage.test.ts",
+        "kind": "Test"
+      },
+      "to": {
+        "file": "packages/core/src/indirectCoverage.ts",
+        "symbol": "executeCoverageTarget"
+      },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": {
+        "allOf": ["test-linking-indirect", "tree-sitter-test"]
+      }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "synthetic.test-linking.colocated-fallback",
+    "name": "Colocated fallback links test file to matching source file",
+    "gate": {
+      "id": "synthetic.required.test-linking",
+      "status": "required",
+      "capability": "colocated-test-fallback",
+      "layer": "test-linking"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": {
+        "file": "packages/core/src/orphanCoverage.test.ts",
+        "kind": "Test"
+      },
+      "to": {
+        "file": "packages/core/src/orphanCoverage.ts",
+        "kind": "File"
+      },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": {
+        "allOf": ["colocated-test-name", "tree-sitter-test"]
+      }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "synthetic.test-linking.no-broad-name-overlap",
+    "name": "Test linking does not connect broad folder or name overlap",
+    "gate": {
+      "id": "synthetic.required.test-linking-false-positive",
+      "status": "required",
+      "capability": "false-positive-guard",
+      "layer": "test-linking"
+    },
+    "check": {
+      "type": "no-path",
+      "from": {
+        "file": "packages/core/src/orphanCoverage.test.ts",
+        "kind": "Test"
+      },
+      "to": {
+        "file": "packages/core/src/duplicateMethods.ts"
+      },
+      "allowedEdgeKinds": ["TESTS"],
+      "maxDepth": 2
+    },
+    "failureClassHint": "test-linking"
+  }
+]
