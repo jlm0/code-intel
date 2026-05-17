@@ -1,0 +1,143 @@
+[
+  {
+    "id": "dub.graph.links-route-to-create-link",
+    "name": "POST /api/links reaches createLink service",
+    "gate": {
+      "id": "dub.target.graph-route-service",
+      "status": "target",
+      "capability": "route/API-to-service",
+      "layer": "graph",
+      "description": "The public link creation route should traverse to the createLink implementation it invokes."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/app/api/links/route.ts",
+          "symbol": "POST"
+        },
+        {
+          "file": "apps/web/lib/api/links/create-link.ts",
+          "symbol": "createLink"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS", "EXPORTS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "dub.graph.create-link-to-prisma",
+    "name": "createLink reaches Prisma database client",
+    "gate": {
+      "id": "dub.target.graph-service-database",
+      "status": "target",
+      "capability": "service-to-database/client",
+      "layer": "graph",
+      "description": "Link creation should expose the service-to-Prisma write path."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/lib/api/links/create-link.ts",
+          "symbol": "createLink"
+        },
+        {
+          "file": "packages/prisma/index.ts",
+          "symbol": "prisma"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "dub.graph.redirect-to-click-analytics",
+    "name": "LinkMiddleware reaches recordClick analytics persistence",
+    "gate": {
+      "id": "dub.target.graph-redirect-analytics",
+      "status": "target",
+      "capability": "redirect-to-analytics/cache/database",
+      "layer": "graph",
+      "description": "Redirect middleware should expose the click tracking path to analytics/cache/database code."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/lib/middleware/link.ts",
+          "symbol": "LinkMiddleware"
+        },
+        {
+          "file": "apps/web/lib/tinybird/record-click.ts",
+          "symbol": "recordClick"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "dub.graph-create-link-test-to-route",
+    "name": "Create-link integration test links to links API route",
+    "gate": {
+      "id": "dub.target.test-linking-create-link-api",
+      "status": "target",
+      "capability": "test-to-implementation",
+      "layer": "test-linking",
+      "description": "API integration tests that exercise POST /links should link to the route or implementation under test."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/tests/links/create-link.test.ts"
+        },
+        {
+          "file": "apps/web/app/api/links/route.ts",
+          "symbol": "POST"
+        }
+      ],
+      "allowedEdgeKinds": ["TESTS", "REFERENCES", "IMPORTS", "CALLS"],
+      "direction": "outgoing",
+      "maxDepth": 5,
+      "requireEvidence": true
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "dub.graph-link-builder-does-not-click-track",
+    "name": "Link creation UI does not directly point at click analytics",
+    "gate": {
+      "id": "dub.target.false-positive-link-builder-click-analytics",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph",
+      "description": "The link creation UI should not be treated as a direct redirect analytics caller."
+    },
+    "check": {
+      "type": "no-path",
+      "from": {
+        "file": "apps/web/ui/links/link-builder/use-link-builder-submit.tsx",
+        "symbol": "useLinkBuilderSubmit"
+      },
+      "to": {
+        "file": "apps/web/lib/tinybird/record-click.ts",
+        "symbol": "recordClick"
+      },
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS", "TESTS"],
+      "direction": "outgoing",
+      "maxDepth": 4
+    },
+    "failureClassHint": "graph-evidence"
+  }
+]
