@@ -1,0 +1,104 @@
+[
+  {
+    "id": "rallly.adv.query.callers-prisma-includes-mutations",
+    "name": "Callers of prisma include all known mutation files",
+    "mode": "callers",
+    "query": "prisma",
+    "limit": 30,
+    "gate": {
+      "id": "rallly.adv.target.query.prisma-callers",
+      "status": "target",
+      "capability": "database-callers-coverage",
+      "layer": "graph",
+      "description": "Callers of the prisma client should include packages/api-core/src/polls/mutations.ts and apps/api/src/routes/polls.ts. Without this, impact analysis of database changes is incomplete."
+    },
+    "expected": [
+      { "file": "packages/api-core/src/polls/mutations.ts", "symbol": "createPoll", "maxRank": 10 },
+      { "file": "apps/api/src/routes/polls.ts", "maxRank": 15 }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "rallly.adv.query.semantic-route-handler-intent",
+    "name": "Semantic 'how is the poll route handler wired' ranks the route file first and the mutation second",
+    "mode": "semantic",
+    "query": "how is the poll route handler wired into the api server and what mutation does it call",
+    "limit": 10,
+    "gate": {
+      "id": "rallly.adv.target.ranking.route-wiring",
+      "status": "target",
+      "capability": "route-wiring-intent",
+      "layer": "ranking",
+      "description": "Implementation-intent on a route handler should rank the route file first, the mutation file within top 3, and the database client within top 8 — without surfacing billing or unrelated UI files."
+    },
+    "expected": [
+      { "file": "apps/api/src/routes/polls.ts", "maxRank": 2 },
+      { "file": "packages/api-core/src/polls/mutations.ts", "symbol": "createPoll", "maxRank": 3 },
+      { "file": "packages/database/src/client.ts", "maxRank": 8 }
+    ],
+    "notExpected": [
+      { "file": "packages/billing/src/**", "maxRank": 5 }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "rallly.adv.query.callers-spaceapikey-includes-route",
+    "name": "Callers of spaceApiKeyAuth include the polls route",
+    "mode": "callers",
+    "query": "spaceApiKeyAuth",
+    "limit": 10,
+    "gate": {
+      "id": "rallly.adv.target.query.middleware-callers",
+      "status": "target",
+      "capability": "middleware-callers-precision",
+      "layer": "graph",
+      "description": "Real-world middleware-to-route analysis depends on the graph capturing every route that wires the middleware. The polls route imports spaceApiKeyAuth and must appear in callers/references."
+    },
+    "expected": [
+      { "file": "apps/api/src/routes/polls.ts", "maxRank": 5 }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "rallly.adv.query.find-symbol-by-qualified-namespace",
+    "name": "find-symbol resolves a fully qualified symbol path even with re-export aliasing",
+    "mode": "find-symbol",
+    "query": "createPoll",
+    "limit": 10,
+    "gate": {
+      "id": "rallly.adv.target.query.qualified-symbol",
+      "status": "target",
+      "capability": "qualified-symbol-resolution",
+      "layer": "query",
+      "description": "find-symbol for createPoll must rank the original declaration first, not a re-export aliased through @rallly/api-core, and must not surface the CreatePollParams type at rank 1."
+    },
+    "expected": [
+      { "file": "packages/api-core/src/polls/mutations.ts", "symbol": "createPoll", "maxRank": 1 }
+    ],
+    "notExpected": [
+      { "file": "packages/api-core/src/polls/mutations.ts", "symbol": "CreatePollParams", "maxRank": 1 }
+    ],
+    "failureClassHint": "query"
+  },
+  {
+    "id": "rallly.adv.query.references-prisma-no-billing-leakage",
+    "name": "References to prisma do NOT include billing files unless billing imports prisma",
+    "mode": "references",
+    "query": "prisma",
+    "limit": 20,
+    "gate": {
+      "id": "rallly.adv.target.query.prisma-no-billing-leakage",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "ranking",
+      "description": "References should be precise — billing files in the pinned slice do not import prisma directly. They must not leak into the top references list."
+    },
+    "expected": [
+      { "file": "packages/api-core/src/polls/mutations.ts", "maxRank": 10 }
+    ],
+    "notExpected": [
+      { "file": "packages/billing/src/**", "maxRank": 10 }
+    ],
+    "failureClassHint": "ranking"
+  }
+]
