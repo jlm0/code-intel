@@ -1,0 +1,88 @@
+[
+  {
+    "id": "ghostfolio.graph.controller-to-service",
+    "name": "Account controller createAccount reaches AccountService.createAccount",
+    "gate": {
+      "id": "ghostfolio.target.graph-controller-service",
+      "status": "target",
+      "capability": "controller-to-service",
+      "layer": "graph",
+      "description": "A NestJS controller method should resolve to the injected service method it calls."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/api/src/app/account/account.controller.ts",
+          "symbol": "createAccount"
+        },
+        {
+          "file": "apps/api/src/app/account/account.service.ts",
+          "symbol": "createAccount"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "direction": "outgoing",
+      "maxDepth": 3,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "ghostfolio.graph.service-to-prisma",
+    "name": "AccountService.createAccount reaches Prisma account create",
+    "gate": {
+      "id": "ghostfolio.target.graph-service-database",
+      "status": "target",
+      "capability": "service-to-database",
+      "layer": "graph",
+      "description": "Service-to-database member chains should be represented as evidence-backed graph edges."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/api/src/app/account/account.service.ts",
+          "symbol": "createAccount"
+        },
+        {
+          "file": "apps/api/src/services/prisma/prisma.service.ts",
+          "symbol": "PrismaService"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "ghostfolio.graph.portfolio-spec-to-factory",
+    "name": "Portfolio calculator spec links to PortfolioCalculatorFactory",
+    "gate": {
+      "id": "ghostfolio.target.test-linking-calculator",
+      "status": "target",
+      "capability": "test-to-implementation",
+      "layer": "test-linking",
+      "description": "Real Jest specs should connect to the implementation factory and calculator code they validate."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/api/src/app/portfolio/calculator/roai/portfolio-calculator-msft-buy-with-dividend.spec.ts"
+        },
+        {
+          "file": "apps/api/src/app/portfolio/calculator/portfolio-calculator.factory.ts",
+          "symbol": "PortfolioCalculatorFactory"
+        }
+      ],
+      "allowedEdgeKinds": ["TESTS", "REFERENCES", "IMPORTS", "CALLS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "test-linking"
+  }
+]

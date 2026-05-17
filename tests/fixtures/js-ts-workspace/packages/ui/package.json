@@ -1,0 +1,11 @@
+{
+  "name": "@fixture/ui",
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@fixture/core": "0.0.0"
+  },
+  "exports": {
+    ".": "./src/useGivingSummary.tsx"
+  }
+}

@@ -1,0 +1,76 @@
+[
+  {
+    "id": "openstatus.query.run-monitor-symbol",
+    "name": "Find run-monitor route registration symbol",
+    "mode": "find-symbol",
+    "query": "registerRunMonitor",
+    "limit": 20,
+    "gate": {
+      "id": "openstatus.target.symbol-route-handler",
+      "status": "target",
+      "capability": "route-to-handler",
+      "layer": "SCIP",
+      "description": "Compiler-backed symbol search should find the Hono route registration function in a nested route module."
+    },
+    "expected": [
+      {
+        "file": "apps/server/src/routes/v1/monitors/run/post.ts",
+        "symbol": "registerRunMonitor",
+        "maxRank": 8
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "openstatus.query.monitor-tag-references",
+    "name": "References to syncMonitorTags include tests and package export",
+    "mode": "references",
+    "query": "syncMonitorTags",
+    "limit": 30,
+    "gate": {
+      "id": "openstatus.target.references-service-test",
+      "status": "target",
+      "capability": "test-to-implementation",
+      "layer": "fusion",
+      "description": "Service references should include test calls and index re-export references without collapsing to unrelated monitor helpers."
+    },
+    "expected": [
+      {
+        "file": "packages/services/src/monitor-tag/__tests__/monitor-tag.test.ts",
+        "maxRank": 20
+      },
+      {
+        "file": "packages/services/src/monitor-tag/index.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "openstatus.query.dashboard-create-monitor-flow",
+    "name": "Semantic query for dashboard create-monitor flow",
+    "mode": "semantic",
+    "query": "dashboard create monitor form submits TRPC mutation then triggers checker run",
+    "limit": 20,
+    "gate": {
+      "id": "openstatus.scoreboard.dashboard-to-api-ranking",
+      "status": "scoreboard",
+      "capability": "UI-to-data/API",
+      "layer": "ranking",
+      "description": "Scoreboard-only retrieval quality check for a UI-to-API monitoring workflow."
+    },
+    "expected": [
+      {
+        "file": "apps/dashboard/src/app/(dashboard)/monitors/create/page.tsx",
+        "symbol": "Page",
+        "maxRank": 8
+      },
+      {
+        "file": "apps/server/src/routes/v1/monitors/run/post.ts",
+        "symbol": "registerRunMonitor",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "ranking"
+  }
+]
