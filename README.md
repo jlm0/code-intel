@@ -1,58 +1,79 @@
-# Code Intel
+---
+title: Code Intelligence Graph
+feature: code-intelligence-graph
+created: 2026-05-13
+last_updated: 2026-05-15
+status: active
+---
 
-Local-first JavaScript and TypeScript code intelligence CLI with MCP access.
+# Code Intelligence Graph
 
-This package is intentionally standalone-shaped so it can be moved into a dedicated repository after the local proof of concept.
+This feature tracks a local-first JavaScript and TypeScript code intelligence tool for agent workflows.
 
-## Basic Usage
+The tool is intended to live in the local `capsule-org` orchestration workspace while it is being designed and tested, but the product direction is general-purpose JS/TS repository intelligence. Para repositories are the first proof-of-concept corpus, not the boundary of the tool. If the approach proves useful, the implementation should move from this local workspace into its own dedicated repository for maintenance and reuse across other work.
 
-```bash
-npm run build
-node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js update --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js find-symbol SomeSymbol --workspace /path/to/workspace --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js semantic "wallet signer" --index-path /path/to/.code-intel/index --filter-repo react-sdk --filter-package @getpara/react-sdk --json
-node dist/cli/main.js eval --suite js-ts-general --json
-node dist/cli/main.js mcp --workspace /path/to/workspace --index-path /path/to/.code-intel/index
+It should build a persistent local code graph, semantic search index, and MCP server so Codex and other LLM agents can ask structured questions about a target JavaScript or TypeScript repository instead of rediscovering relationships through repeated text search.
+
+## Required Docs
+
+- [Feature Spec](feature-spec.md)
+- [Feature Plan](feature-plan.md)
+- [Design Notes](feature-design-notes.md)
+- [Verification Checklist](verification-checklist.md)
+- [Testing Strategy](testing-strategy.md)
+- [Adversarial Evals (Codex handoff)](adversarial-evals.md)
+- [Future Improvements](future-improvements.md)
+
+## Research
+
+- [Local Stack Reference](research/01-local-stack-reference.md)
+- [LadybugDB And LanceDB Comparison](research/02-ladybugdb-lancedb-comparison.md)
+
+## Current Stack Decision
+
+- Runtime and CLI: Node.js 20+ with TypeScript.
+- CLI command framework: `commander`.
+- Precise index: `@sourcegraph/scip-typescript`.
+- Syntax facts and chunks: `tree-sitter`, `tree-sitter-typescript`, and `tree-sitter-javascript`.
+- Graph and vector database: `@ladybugdb/core` with a persistent local `.lbug` database path.
+- Embeddings: `@huggingface/transformers` using `jinaai/jina-embeddings-v2-base-code`.
+- Exact search: `ripgrep` through `rg --json`.
+- Agent interface: `@modelcontextprotocol/sdk` over stdio MCP.
+- Testing: `vitest`, `execa` for pipe-based CLI and MCP process tests, and `node-pty` for TTY-only CLI behavior tests.
+
+## Working Location
+
+The intended local implementation location is:
+
+```text
+/Users/jordy/Documents/GitHub/capsule-org/local-tools/code-intel/
 ```
 
-If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated, build, log, dependency, and local-dev runtime folders are ignored by default; pass `--include-ignored` only when those paths should be indexed or searched.
+The intended generated artifact location is:
 
-`update` performs changed-file incremental reindexing. It fingerprints current files by bytes, reuses unchanged file chunk facts, structural AST facts, and cached embeddings, recomputes relationships into a fresh Ladybug generation, then atomically publishes that generation. Deleted files disappear because they do not contribute facts to the new generation.
-
-The Tree-sitter layer exposes `extractSourceFileFacts()` for rich JS/TS structure and keeps `chunkSourceFile()` as the compatibility wrapper. File facts include imports, exports, declarations, calls, member access paths, ownership, tests, callbacks, stable ranges, source hashes, and containing chunk provenance. Import and export facts are also written as graph nodes with owning-file edges.
-
-The fusion layer links Tree-sitter structural facts with SCIP compiler facts into resolved module and symbol evidence. It writes generation-local `facts/resolution.json`, resolves relative imports, path aliases, package exports, default/named/namespace imports, re-exports, dynamic imports, and CommonJS where statically knowable, and marks unresolved cases explicitly. Semantic search uses hybrid ranking over vector, symbol, path, file-kind, and graph-neighbor signals.
-
-The default embedding provider is local Jina through Transformers.js with `jinaai/jina-embeddings-v2-base-code`. Use `--embedding-provider hash` only when you need the deterministic fast fallback for tests, offline diagnostics, or comparison runs:
-
-```bash
-node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --embedding-provider hash --json
+```text
+/Users/jordy/Documents/GitHub/capsule-org/.code-intel/
 ```
 
-No hosted embedding API is used. The Jina model is downloaded into the configured index model cache on first use unless already cached.
+## Current MVP
 
-## Eval Packs
+The first MVP now lives at:
 
-`eval` runs pack-based quality checks. The default suite is `js-ts-general`, a committed synthetic corpus that stays small, deterministic, and fast enough for regression coverage:
-
-```bash
-node dist/cli/main.js eval --suite js-ts-general --json
-node dist/cli/main.js eval --suite js-ts-general --embedding-provider hash --json
+```text
+/Users/jordy/Documents/GitHub/capsule-org/local-tools/code-intel/
 ```
 
-The Rallly OSS app-flow pack is committed as metadata and cases only. It fetches the pinned external repository on demand into an eval cache:
+That folder has its own local git history on `main` so the implementation can be moved to a dedicated repository later with useful commit history intact.
 
-```bash
-node dist/cli/main.js eval --suite oss-rallly-app-flow --fetch --json
-```
+Implemented surface:
 
-Use `--eval-cache-path /path/to/cache` to control where on-demand corpora are stored. Rallly is meant for real-world retrieval quality validation across frontend, API, package, database, middleware, and test paths; it is not a replacement for the synthetic regression gate.
-
-Eval cases include gate metadata:
-
-- `required` gates are blocking. Any required failure makes `status` and `blockingStatus` fail.
-- `target` gates are non-blocking development targets for quality work.
-- `scoreboard` gates are non-blocking trend metrics.
-
-JSON reports include `qualityStatus` plus summaries by gate status, gate, capability, expected-rank coverage, and failure class. This lets the Rallly pack track app-flow and ranking gaps without hiding the current AST, SCIP, fusion, and graph regression signal.
+- `code-intel` CLI with `index`, `update`, `status`, `health`, query commands, `eval`, and `mcp`.
+- LadybugDB graph and native vector persistence under `.code-intel/code-intel.lbug`.
+- SCIP raw artifact preservation, normalized occurrence facts, canonical symbol promotion, and evidence-backed relationship edges.
+- Tree-sitter structural facts for TS, TSX, JS, JSX, partial syntax, static imports, dynamic imports, CommonJS imports and exports, re-exports, default exports, declarations, decorators, constructors, calls, member access, JSX component usage, ownership, tests, callbacks, and backward-compatible chunks.
+- First-class Import and Export graph nodes, declaration-backed symbols for non-chunk declarations, owning-file edges, target-symbol fallback edges when SCIP does not emit a definition, and TypeScript-compatible module resolution for package exports, path aliases, re-exports, default/named/namespace imports, dynamic imports, and CommonJS where statically knowable.
+- Generation-local structural facts in `facts/files.json`, normalized SCIP facts in `facts/scip.json`, resolved module/export facts in `facts/resolution.json`, and a separate `facts/embeddings.json` vector reuse cache.
+- Hybrid semantic ranking that uses vector, symbol, path, file-kind, and graph-neighbor signals.
+- MCP stdio tools backed by the same query engine as the CLI.
+- Pack-based eval harness with a committed synthetic fixture pack and on-demand Rallly OSS app-flow pack, including gated `required`, `target`, and `scoreboard` reporting plus pinned AST fact cases for real Rallly files. Current hash-backed validation passes the synthetic required gates and the Rallly required plus target gates.
+- First `js-monorepo/packages/react-sdk` smoke validation.
