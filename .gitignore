@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .code-intel/
+.local-releases/
 docs/
 AGENTS.md
 tmp/

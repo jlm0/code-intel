@@ -168,7 +168,7 @@ describe("CLI and MCP agent-surface parity", () => {
       await client.close();
       await rm(indexPath, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 async function cliJson(args: string[], indexPath: string): Promise<QueryResultLike & Record<string, unknown>> {

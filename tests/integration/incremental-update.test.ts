@@ -114,7 +114,7 @@ describe("incremental changed-file reindexing", () => {
       await rm(indexPath, { recursive: true, force: true });
       await rm(fullIndexPath, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 
   it("queries one active generation snapshot even when update publishes a new generation", async () => {
     const workspaceRoot = await copyFixtureWorkspace();

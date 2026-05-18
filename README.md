@@ -18,7 +18,7 @@ No hosted embedding API or hosted code index is used during normal indexing.
 
 ## Status
 
-This is an early standalone tool. The CLI and MCP surfaces are usable, but package publishing and release automation are still being hardened. Install from the repository or a local tarball until an npm package is published.
+This is an early standalone tool. The CLI and MCP surfaces are usable, and the repository supports versioned local installs. Install from the repository or a local tarball until an npm package is published.
 
 ## Install From Source
 
@@ -36,11 +36,23 @@ Confirm the binary is available:
 code-intel health --json
 ```
 
-You can also test the packaged shape without publishing:
+## Versioned Local Install
+
+Build, pack, and install the current package version globally:
 
 ```bash
-npm pack
-npm install -g ./code-intel-0.1.0.tgz
+npm run release:local
+code-intel --version
+```
+
+The release script runs the test suite, creates a versioned tarball under `.local-releases/v<version>/`, installs that exact tarball with `npm install -g`, and verifies the installed CLI reports the same package version.
+
+When a new local version is ready, bump the package version first:
+
+```bash
+npm run version:bump -- patch
+npm run version:bump -- minor
+npm run version:bump -- 0.2.0
 ```
 
 ## Quick Start

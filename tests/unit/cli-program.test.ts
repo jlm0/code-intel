@@ -1,8 +1,18 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createCliProgram } from "../../src/cli/program.js";
 
 describe("createCliProgram", () => {
+  it("uses the package version for CLI version output", () => {
+    const packageJson = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+      version: string;
+    };
+
+    expect(createCliProgram().version()).toBe(packageJson.version);
+  });
+
   it("registers the required command surface", () => {
     const program = createCliProgram();
 

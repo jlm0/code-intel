@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { Command } from "commander";
 
 import { EdgeKindSchema } from "../schema/schemas.js";
@@ -22,7 +24,7 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
   program
     .name("code-intel")
     .description("Local-first JS/TS code intelligence graph CLI")
-    .version("0.1.0")
+    .version(readPackageVersion())
     .showHelpAfterError();
 
   registerCommand(program, "index", "Index one or more JS/TS repositories.", actions.index, runtime);
@@ -55,6 +57,15 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
   registerCommand(program, "mcp", "Start the MCP stdio server.", actions.mcp, runtime, { suppressOutput: true });
 
   return program;
+}
+
+function readPackageVersion(): string {
+  const packageJsonUrl = new URL("../../package.json", import.meta.url);
+  const packageJson = JSON.parse(readFileSync(packageJsonUrl, "utf8")) as { version?: unknown };
+  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+    throw new Error("Unable to read code-intel package version.");
+  }
+  return packageJson.version;
 }
 
 function registerCommand(

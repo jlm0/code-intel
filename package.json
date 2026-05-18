@@ -31,13 +31,15 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist coverage",
     "prepack": "npm run build",
+    "release:local": "node scripts/local-release.mjs",
     "test": "npm run build && vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:cli": "npm run build && vitest run tests/cli",
     "test:mcp": "npm run build && vitest run tests/mcp",
     "test:e2e": "npm run build && vitest run tests/e2e",
-    "eval": "node dist/cli/main.js eval"
+    "eval": "node dist/cli/main.js eval",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "engines": {
     "node": ">=20"

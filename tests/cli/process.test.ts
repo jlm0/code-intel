@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +11,17 @@ import { copyFixtureWorkspace, mutateFixtureWorkspace } from "../helpers/increme
 const cliPath = new URL("../../dist/cli/main.js", import.meta.url).pathname;
 
 describe("code-intel process behavior", () => {
+  it("prints the package version", async () => {
+    const packageJson = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+      version: string;
+    };
+    const result = await execa("node", [cliPath, "--version"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(packageJson.version);
+    expect(result.stderr).toBe("");
+  });
+
   it("prints help to stdout", async () => {
     const result = await execa("node", [cliPath, "--help"]);
 
