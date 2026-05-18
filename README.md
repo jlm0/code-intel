@@ -2,7 +2,9 @@
 
 Local-first JavaScript and TypeScript code intelligence CLI with MCP access.
 
-This package is intentionally standalone-shaped so it can be moved into a dedicated repository after the local proof of concept.
+This package is a standalone local repository for code-intelligence CLI, MCP, eval, diagnostics, and benchmark work.
+
+Detailed feature, design, eval, and verification notes live in [docs/README.md](docs/README.md).
 
 ## Basic Usage
 
@@ -76,12 +78,12 @@ node dist/cli/main.js benchmark --suite oss-rallly-app-flow --fetch --eval-cache
 
 Use hash for fast repeatable mechanical benchmarking. Use Jina when measuring realistic local semantic indexing cost after the model cache is warm.
 
-Recommended defaults before standalone extraction:
+Recommended defaults before packaging or publishing:
 
 - Use `eval --diagnostics` on every required and target eval pack before trusting a green eval matrix.
 - Use hash benchmarks for quick regression checks and Jina benchmarks for local semantic cost checks.
 - Keep `--skip-mcp-latency` for focused index/update benchmarks, then run without it when validating MCP packaging.
-- Treat `ladybugLock.concurrentRead: "fail"` as a scale signal to investigate before claiming concurrent-reader readiness.
+- Treat `ladybugLock.concurrentRead`, `readerDuringUpdate`, or `readerAfterPublish` failures as standalone-readiness blockers.
 
 ## MCP Usage
 
