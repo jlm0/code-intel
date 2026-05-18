@@ -1,7 +1,0 @@
-node_modules/
-dist/
-coverage/
-.code-intel/
-tmp/
-*.log
-.DS_Store
