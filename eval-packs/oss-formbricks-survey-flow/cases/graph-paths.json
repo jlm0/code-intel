@@ -1,0 +1,114 @@
+[
+  {
+    "id": "formbricks.graph-survey-editor-auth",
+    "name": "SurveyEditorPage reaches getWorkspaceAuth",
+    "gate": {
+      "id": "formbricks.target.graph-editor-auth",
+      "status": "target",
+      "capability": "auth/org-permission",
+      "layer": "graph",
+      "description": "Survey editor route code should traverse to workspace auth checks."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/modules/survey/editor/page.tsx",
+          "symbol": "SurveyEditorPage"
+        },
+        {
+          "file": "apps/web/modules/workspaces/lib/utils.ts",
+          "symbol": "getWorkspaceAuth"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "formbricks.graph-responses-action-to-database",
+    "name": "Responses action reaches response database service",
+    "gate": {
+      "id": "formbricks.target.graph-response-database",
+      "status": "target",
+      "capability": "response/submission-persistence",
+      "layer": "graph",
+      "description": "Response actions should traverse to response service/database access."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "apps/web/app/(app)/workspaces/[workspaceId]/surveys/[surveyId]/(analysis)/actions.ts",
+          "symbol": "getResponsesAction"
+        },
+        {
+          "file": "apps/web/lib/response/service.ts",
+          "symbol": "getResponses"
+        }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "formbricks.graph-process-response-test",
+    "name": "processResponseData tests link to implementation",
+    "gate": {
+      "id": "formbricks.target.test-linking-response-utils",
+      "status": "target",
+      "capability": "test-to-implementation",
+      "layer": "test-linking",
+      "description": "Package-level Vitest cases should link to the response utility they validate."
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        {
+          "file": "packages/surveys/src/lib/response.test.ts"
+        },
+        {
+          "file": "packages/surveys/src/lib/response.ts",
+          "symbol": "processResponseData"
+        }
+      ],
+      "allowedEdgeKinds": ["TESTS", "REFERENCES", "IMPORTS", "CALLS"],
+      "direction": "outgoing",
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "formbricks.graph-org-settings-not-response-utils",
+    "name": "Organization settings action does not falsely traverse to survey response utility",
+    "gate": {
+      "id": "formbricks.target.false-positive-org-response-utils",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph",
+      "description": "Organization permission actions should not be linked to unrelated response processing utilities."
+    },
+    "check": {
+      "type": "no-path",
+      "from": {
+        "file": "apps/web/app/(app)/workspaces/[workspaceId]/settings/organization/general/actions.ts",
+        "symbol": "updateOrganizationNameAction"
+      },
+      "to": {
+        "file": "packages/surveys/src/lib/response.ts",
+        "symbol": "processResponseData"
+      },
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS", "TESTS"],
+      "direction": "outgoing",
+      "maxDepth": 5
+    },
+    "failureClassHint": "graph-evidence"
+  }
+]

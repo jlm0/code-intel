@@ -1,0 +1,138 @@
+[
+  {
+    "id": "ghostfolio.ast.account-controller",
+    "name": "Account controller imports services and exposes account methods",
+    "file": "apps/api/src/app/account/account.controller.ts",
+    "gate": {
+      "id": "ghostfolio.target.ast-nest-controller",
+      "status": "target",
+      "capability": "angular-to-nest-controller",
+      "layer": "AST",
+      "description": "NestJS controller extraction should preserve controller class, service imports, and method call evidence."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "./account.service",
+          "importedName": "AccountService",
+          "localName": "AccountService",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "@ghostfolio/api/app/portfolio/portfolio.service",
+          "importedName": "PortfolioService",
+          "localName": "PortfolioService",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "AccountController",
+          "kind": "Class",
+          "exported": true
+        },
+        {
+          "qualifiedName": "AccountController.createAccount",
+          "kind": "ClassMethod"
+        }
+      ],
+      "calls": [
+        {
+          "name": "createAccount",
+          "memberPath": "this.accountService.createAccount",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ghostfolio.ast.account-service-prisma",
+    "name": "Account service records Prisma and balance service calls",
+    "file": "apps/api/src/app/account/account.service.ts",
+    "gate": {
+      "id": "ghostfolio.target.ast-service-database",
+      "status": "target",
+      "capability": "service-to-database",
+      "layer": "AST",
+      "description": "NestJS services should retain injected-service and Prisma member-call evidence."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@ghostfolio/api/services/prisma/prisma.service",
+          "importedName": "PrismaService",
+          "localName": "PrismaService",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "AccountService",
+          "kind": "Class",
+          "exported": true
+        },
+        {
+          "qualifiedName": "AccountService.createAccount",
+          "kind": "ClassMethod"
+        }
+      ],
+      "calls": [
+        {
+          "name": "create",
+          "memberPath": "this.prismaService.account.create",
+          "callKind": "member"
+        },
+        {
+          "name": "createOrUpdateAccountBalance",
+          "memberPath": "this.accountBalanceService.createOrUpdateAccountBalance",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ghostfolio.ast.angular-accounts-table",
+    "name": "Angular accounts table emits component and output facts",
+    "file": "libs/ui/src/lib/accounts-table/accounts-table.component.ts",
+    "gate": {
+      "id": "ghostfolio.target.ast-angular-component",
+      "status": "target",
+      "capability": "angular-component-structure",
+      "layer": "AST",
+      "description": "Angular component extraction should preserve component class, signal-style outputs, and router/notification member calls."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@angular/core",
+          "importedName": "Component",
+          "localName": "Component",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "GfAccountsTableComponent",
+          "kind": "Class",
+          "exported": true
+        },
+        {
+          "qualifiedName": "GfAccountsTableComponent.onDeleteAccount",
+          "kind": "ClassMethod"
+        }
+      ],
+      "calls": [
+        {
+          "name": "emit",
+          "memberPath": "this.accountDeleted.emit",
+          "callKind": "member"
+        },
+        {
+          "name": "navigate",
+          "memberPath": "this.router.navigate",
+          "callKind": "member"
+        }
+      ]
+    }
+  }
+]

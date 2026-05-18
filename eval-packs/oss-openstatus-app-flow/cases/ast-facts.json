@@ -1,0 +1,175 @@
+[
+  {
+    "id": "openstatus.ast.monitor-run-route",
+    "name": "Monitor run route preserves Hono, DB, checker, and env facts",
+    "file": "apps/server/src/routes/v1/monitors/run/post.ts",
+    "gate": {
+      "id": "openstatus.target.ast-monitor-route",
+      "status": "target",
+      "capability": "monitoring-route-to-database",
+      "layer": "AST",
+      "description": "Hono route extraction should keep route factory calls, DB imports, env usage, and fetch side effects."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@hono/zod-openapi",
+          "importedName": "createRoute",
+          "localName": "createRoute",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "@openstatus/db/src/schema",
+          "importedName": "monitorRun",
+          "localName": "monitorRun",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "@/env",
+          "importedName": "env",
+          "localName": "env",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "postMonitor",
+          "kind": "Variable"
+        },
+        {
+          "qualifiedName": "registerRunMonitor",
+          "kind": "Function",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "createRoute",
+          "callKind": "function"
+        },
+        {
+          "name": "openapi",
+          "memberPath": "api.openapi",
+          "callKind": "member"
+        },
+        {
+          "name": "fetch",
+          "callKind": "function"
+        },
+        {
+          "name": "insert",
+          "memberPath": "db.insert",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "openstatus.ast.dashboard-create-monitor",
+    "name": "Dashboard create monitor page keeps TRPC mutation and form facts",
+    "file": "apps/dashboard/src/app/(dashboard)/monitors/create/page.tsx",
+    "gate": {
+      "id": "openstatus.target.ast-dashboard-ui",
+      "status": "target",
+      "capability": "UI-to-data/API",
+      "layer": "AST",
+      "description": "Next dashboard components should expose imported forms, hook calls, TRPC mutations, and JSX component usage."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@/components/forms/monitor/form-general",
+          "importedName": "FormGeneral",
+          "localName": "FormGeneral",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "@/lib/trpc/client",
+          "importedName": "useTRPC",
+          "localName": "useTRPC",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "Page",
+          "kind": "Function",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "useTRPC",
+          "callKind": "function"
+        },
+        {
+          "name": "useMutation",
+          "callKind": "function"
+        },
+        {
+          "name": "FormGeneral",
+          "callKind": "jsx"
+        },
+        {
+          "name": "mutateAsync",
+          "memberPath": "createMonitorMutation.mutateAsync",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "openstatus.ast.monitor-tag-service",
+    "name": "Monitor tag service preserves transaction, auth, audit, and DB facts",
+    "file": "packages/services/src/monitor-tag/sync.ts",
+    "gate": {
+      "id": "openstatus.target.ast-service-database",
+      "status": "target",
+      "capability": "service-to-database",
+      "layer": "AST",
+      "description": "Service-layer extraction should retain DB schema imports, transaction calls, audit calls, and validation ownership."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@openstatus/db/src/schema",
+          "importedName": "monitorTag",
+          "localName": "monitorTag",
+          "importKind": "value"
+        },
+        {
+          "moduleSpecifier": "../audit",
+          "importedName": "emitAudit",
+          "localName": "emitAudit",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "syncMonitorTags",
+          "kind": "Function",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "requireScope",
+          "callKind": "function"
+        },
+        {
+          "name": "withTransaction",
+          "callKind": "function"
+        },
+        {
+          "name": "emitAudit",
+          "callKind": "function"
+        },
+        {
+          "name": "delete",
+          "memberPath": "tx.delete",
+          "callKind": "member"
+        }
+      ]
+    }
+  }
+]
