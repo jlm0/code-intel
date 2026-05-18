@@ -9,6 +9,7 @@ import type {
   SourceOwnershipFact,
   SourceRange,
   SourceTestCaseFact,
+  SourceTypeReferenceFact,
   TreeSitterNode,
 } from "./types.js";
 import {
@@ -128,6 +129,7 @@ export function assignContainment(input: {
   callbacks: SourceCallbackFact[];
   calls: SourceCallFact[];
   memberAccesses: SourceMemberAccessFact[];
+  typeReferences: SourceTypeReferenceFact[];
   chunks: SourceChunk[];
 }): void {
   const scopes = [
@@ -163,6 +165,11 @@ export function assignContainment(input: {
     const containing = nearestContainingScope(scopes, memberAccess.range);
     memberAccess.containingDeclarationName = containing?.name;
     memberAccess.containingChunkIdSuffix = containingChunkId(input.chunks, memberAccess.range);
+  }
+  for (const typeReference of input.typeReferences) {
+    const containing = nearestContainingScope(scopes, typeReference.range);
+    typeReference.containingDeclarationName = containing?.name;
+    typeReference.containingChunkIdSuffix = containingChunkId(input.chunks, typeReference.range);
   }
   assignRouteCallContainment(input.declarations, input.calls, input.memberAccesses);
 }

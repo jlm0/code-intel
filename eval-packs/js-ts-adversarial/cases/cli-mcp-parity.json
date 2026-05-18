@@ -1,0 +1,166 @@
+[
+  {
+    "id": "adv.cli-mcp.agent-surface-parity",
+    "name": "CLI JSON commands and MCP structured tools expose equivalent agent-ready code intelligence",
+    "gate": {
+      "id": "adv.required.cli-mcp-parity",
+      "status": "required",
+      "capability": "cli-mcp-parity",
+      "layer": "cli-mcp-parity",
+      "description": "The built CLI JSON surface and MCP structuredContent surface return equivalent IDs, files, symbols, evidence, ranking metadata, path edges, limits, diagnostics, and bounded context for the same fixture workflow."
+    },
+    "steps": [
+      {
+        "id": "semantic",
+        "cliArgs": ["semantic", "tagged template html renderer", "--limit", "5"],
+        "mcpTool": "semantic_search",
+        "mcpArguments": {
+          "query": "tagged template html renderer",
+          "limit": 5
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "rankingReasons": true,
+          "allowExcerpts": false,
+          "maxResultCount": 5
+        }
+      },
+      {
+        "id": "symbol",
+        "cliArgs": ["find-symbol", "html", "--limit", "5"],
+        "mcpTool": "find_symbol",
+        "mcpArguments": {
+          "name": "html",
+          "limit": 5
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "symbols": ["html"],
+          "maxResultCount": 5
+        }
+      },
+      {
+        "id": "relationships",
+        "cliArgs": [
+          "relationships",
+          "html",
+          "--direction",
+          "incoming",
+          "--edge-kind",
+          "CALLS",
+          "REFERENCES",
+          "--limit",
+          "10"
+        ],
+        "mcpTool": "get_relationships",
+        "mcpArguments": {
+          "seed": "html",
+          "direction": "incoming",
+          "allowedEdgeKinds": ["CALLS", "REFERENCES"],
+          "limit": 10
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "relationshipEvidence": true,
+          "allowExcerpts": false,
+          "maxResultCount": 10
+        }
+      },
+      {
+        "id": "run_tagged",
+        "cliArgs": ["find-symbol", "runTagged", "--limit", "1"],
+        "mcpTool": "find_symbol",
+        "mcpArguments": {
+          "name": "runTagged",
+          "limit": 1
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "symbols": ["runTagged"],
+          "maxResultCount": 1
+        }
+      },
+      {
+        "id": "trace",
+        "cliArgs": [
+          "trace-path",
+          "{{steps.run_tagged.cli.results.0.id}}",
+          "{{steps.symbol.cli.results.0.id}}",
+          "--limit",
+          "10",
+          "--depth",
+          "4",
+          "--edge-kind",
+          "CALLS",
+          "REFERENCES",
+          "--direction",
+          "outgoing"
+        ],
+        "mcpTool": "trace_path",
+        "mcpArguments": {
+          "fromId": "{{steps.run_tagged.mcp.result.results.0.id}}",
+          "toId": "{{steps.symbol.mcp.result.results.0.id}}",
+          "limit": 10,
+          "maxDepth": 4,
+          "allowedEdgeKinds": ["CALLS", "REFERENCES"],
+          "direction": "outgoing"
+        },
+        "expect": {
+          "ids": ["{{steps.symbol.cli.results.0.id}}"],
+          "pathEdges": true,
+          "maxResultCount": 10
+        }
+      },
+      {
+        "id": "diagnose_file",
+        "cliArgs": ["diagnose", "file", "packages/dispatch/src/tagged-templates.ts"],
+        "mcpTool": "diagnose_file",
+        "mcpArguments": {
+          "path": "packages/dispatch/src/tagged-templates.ts"
+        },
+        "expect": {
+          "resultFields": ["matched", "file"]
+        }
+      },
+      {
+        "id": "diagnose_symbol",
+        "cliArgs": ["diagnose", "symbol", "html"],
+        "mcpTool": "diagnose_symbol",
+        "mcpArguments": {
+          "name": "html"
+        },
+        "expect": {
+          "resultFields": ["matched", "symbols"]
+        }
+      },
+      {
+        "id": "context",
+        "cliArgs": ["get-context", "{{steps.semantic.cli.results.0.id}}", "--limit", "3"],
+        "mcpTool": "get_context",
+        "mcpArguments": {
+          "nodeId": "{{steps.semantic.mcp.result.results.0.id}}",
+          "limit": 3
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "excerpt": true,
+          "maxExcerptBytes": 16000,
+          "maxResultCount": 3
+        }
+      },
+      {
+        "id": "invalid_input",
+        "cliArgs": ["find-symbol"],
+        "mcpTool": "find_symbol",
+        "mcpArguments": {
+          "name": "",
+          "limit": 5
+        },
+        "expect": {
+          "error": true
+        }
+      }
+    ],
+    "failureClassHint": "cli-mcp-parity"
+  }
+]

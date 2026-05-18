@@ -1,90 +1,180 @@
-# Code Intel
+# code-intel
 
-Local-first JavaScript and TypeScript code intelligence CLI with MCP access.
+Local-first JavaScript and TypeScript code intelligence for CLI workflows and MCP agents.
 
-This package is a standalone local repository for code-intelligence CLI, MCP, eval, diagnostics, and benchmark work.
+`code-intel` indexes a JS/TS workspace into a local graph and vector store, then exposes the result through a CLI and an MCP stdio server. It is built for agents and developers that need grounded answers about symbols, references, call paths, imports, tests, diagnostics, and bounded source context without sending a codebase to a hosted indexing service.
 
-Detailed feature, design, eval, and verification notes live in [docs/README.md](docs/README.md).
+## What It Provides
 
-## Basic Usage
+- JS/TS workspace indexing with Tree-sitter syntax facts and SCIP compiler facts.
+- A persistent local LadybugDB graph/vector index under `.code-intel/`.
+- Hybrid semantic search using local Jina embeddings by default, with a deterministic hash provider for tests and offline checks.
+- Symbol lookup, references, callers, callees, relationship browsing, path tracing, and bounded context reads.
+- Diagnostics for missing files, missing symbols, discovery skips, parse recovery, graph writes, and queryability.
+- MCP tools backed by the same query engine and schema contracts as the CLI.
+- Eval packs and benchmarks for regression testing graph, ranking, MCP, CLI parity, and app-flow behavior.
+
+No hosted embedding API or hosted code index is used during normal indexing.
+
+## Status
+
+This is an early standalone tool. The CLI and MCP surfaces are usable, but package publishing and release automation are still being hardened. Install from the repository or a local tarball until an npm package is published.
+
+## Install From Source
 
 ```bash
+git clone https://github.com/jlm0/code-intel.git
+cd code-intel
+npm install
 npm run build
-node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js update --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js find-symbol SomeSymbol --workspace /path/to/workspace --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js semantic "wallet signer" --index-path /path/to/.code-intel/index --filter-repo react-sdk --filter-package @getpara/react-sdk --json
-node dist/cli/main.js diagnose file packages/core/src/tithe.ts --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js diagnose symbol SomeSymbol --index-path /path/to/.code-intel/index --json
-node dist/cli/main.js eval --suite js-ts-general --json
-node dist/cli/main.js benchmark --suite js-ts-general --embedding-provider hash --skip-mcp-latency --json
-node dist/cli/main.js mcp --workspace /path/to/workspace --index-path /path/to/.code-intel/index
+npm link
 ```
 
-If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated, build, log, dependency, and local-dev runtime folders are ignored by default; pass `--include-ignored` only when those paths should be indexed or searched.
-
-`update` performs changed-file incremental reindexing. It fingerprints current files by bytes, reuses unchanged file chunk facts, structural AST facts, and cached embeddings, recomputes relationships into a fresh Ladybug generation, then atomically publishes that generation. Deleted files disappear because they do not contribute facts to the new generation.
-
-The Tree-sitter layer exposes `extractSourceFileFacts()` for rich JS/TS structure and keeps `chunkSourceFile()` as the compatibility wrapper. File facts include imports, exports, declarations, calls, member access paths, ownership, tests, callbacks, stable ranges, source hashes, and containing chunk provenance. Import and export facts are also written as graph nodes with owning-file edges.
-
-The fusion layer links Tree-sitter structural facts with SCIP compiler facts into resolved module and symbol evidence. It writes generation-local `facts/resolution.json`, resolves relative imports, path aliases, package exports, default/named/namespace imports, re-exports, dynamic imports, and CommonJS where statically knowable, and marks unresolved cases explicitly. Semantic search uses hybrid ranking over vector, symbol, path, file-kind, and graph-neighbor signals.
-
-Each generation also writes `facts/diagnostics.json`. Diagnostics record file lifecycle status across discovery, ignore and tsconfig decisions, parsing, AST facts, SCIP facts, chunks, embeddings, graph writes, exact queryability, symbol queryability, and semantic ranking readiness. Use `diagnose file` when a file is missing from results, and `diagnose symbol` when a symbol query needs evidence about the indexed lifecycle behind it.
-
-The default embedding provider is local Jina through Transformers.js with `jinaai/jina-embeddings-v2-base-code`. Use `--embedding-provider hash` only when you need the deterministic fast fallback for tests, offline diagnostics, or comparison runs:
+Confirm the binary is available:
 
 ```bash
-node dist/cli/main.js index --workspace /path/to/workspace --repo /path/to/repo --index-path /path/to/.code-intel/index --embedding-provider hash --json
+code-intel health --json
 ```
 
-No hosted embedding API is used. The Jina model is downloaded into the configured index model cache on first use unless already cached.
-
-## Eval Packs
-
-`eval` runs pack-based quality checks. The default suite is `js-ts-general`, a committed synthetic corpus that stays small, deterministic, and fast enough for regression coverage:
+You can also test the packaged shape without publishing:
 
 ```bash
-node dist/cli/main.js eval --suite js-ts-general --json
-node dist/cli/main.js eval --suite js-ts-general --embedding-provider hash --json
-node dist/cli/main.js eval --suite js-ts-general --embedding-provider hash --diagnostics --json
+npm pack
+npm install -g ./code-intel-0.1.0.tgz
 ```
 
-The Rallly OSS app-flow pack is committed as metadata and cases only. It fetches the pinned external repository on demand into an eval cache:
+## Quick Start
+
+Index a workspace:
 
 ```bash
-node dist/cli/main.js eval --suite oss-rallly-app-flow --fetch --json
+code-intel index \
+  --workspace /path/to/workspace \
+  --index-path /path/to/workspace/.code-intel/index \
+  --json
 ```
 
-Use `--eval-cache-path /path/to/cache` to control where on-demand corpora are stored. Rallly is meant for real-world retrieval quality validation across frontend, API, package, database, middleware, and test paths; it is not a replacement for the synthetic regression gate.
-
-Eval cases include gate metadata:
-
-- `required` gates are blocking. Any required failure makes `status` and `blockingStatus` fail.
-- `target` gates are non-blocking development targets for quality work.
-- `scoreboard` gates are non-blocking trend metrics.
-
-JSON reports include `qualityStatus` plus summaries by gate status, gate, capability, expected-rank coverage, and failure class. This lets the Rallly pack track app-flow and ranking gaps without hiding the current AST, SCIP, fusion, and graph regression signal.
-
-`--diagnostics` adds a preflight section for every `expected` and `notExpected` file or symbol. It checks whether the file exists in the fetched or sparse corpus, was discovered, was indexed, was written to graph, has embedded chunks, and is exact, symbol, or semantic queryable. Misses are classified as fetch, sparse-checkout, discovery, ignore, tsconfig, parse, AST, SCIP, graph, embedding, query, or ranking where the evidence points.
-
-## Benchmarks
-
-`benchmark` copies an eval corpus into a temporary workspace and records cold index, warm update, one-file update, deleted-file update, query latency, optional MCP query latency, memory, node/edge/chunk counts, embedding batch size, graph write batch sizes, and Ladybug concurrent-read behavior:
+Run common queries:
 
 ```bash
-node dist/cli/main.js benchmark --suite js-ts-general --embedding-provider hash --skip-mcp-latency --json
-node dist/cli/main.js benchmark --suite oss-rallly-app-flow --fetch --eval-cache-path /tmp/code-intel-eval-cache --json
+code-intel semantic "wallet signer" --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
+code-intel find-symbol SomeSymbol --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
+code-intel relationships SomeSymbol --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --direction both --json
+code-intel trace-path SourceSymbol TargetSymbol --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
+code-intel get-context node-id-or-file --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
 ```
 
-Use hash for fast repeatable mechanical benchmarking. Use Jina when measuring realistic local semantic indexing cost after the model cache is warm.
+Incrementally refresh after edits:
 
-Recommended defaults before packaging or publishing:
+```bash
+code-intel update --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
+```
 
-- Use `eval --diagnostics` on every required and target eval pack before trusting a green eval matrix.
-- Use hash benchmarks for quick regression checks and Jina benchmarks for local semantic cost checks.
-- Keep `--skip-mcp-latency` for focused index/update benchmarks, then run without it when validating MCP packaging.
-- Treat `ladybugLock.concurrentRead`, `readerDuringUpdate`, or `readerAfterPublish` failures as standalone-readiness blockers.
+If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated folders, dependency folders, build output, logs, and local runtime folders are ignored by default.
 
 ## MCP Usage
 
-The MCP server exposes the same query engine as the CLI over stdio. Tool responses include guidance with purpose, evidence fields, suggested next tools, and examples so agents can choose between exact search, semantic search, symbol lookup, references, graph expansion, path tracing, and context reads. Relationship and ranking metadata should be inspected before treating a result as strong evidence, especially `evidenceSources`, `confidence`, `fallbackReason`, `pathEdges`, and `metadata.ranking.reasons`.
+Start the MCP server:
+
+```bash
+code-intel mcp --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index
+```
+
+Example MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "code-intel": {
+      "command": "code-intel",
+      "args": [
+        "mcp",
+        "--workspace",
+        "/path/to/workspace",
+        "--index-path",
+        "/path/to/workspace/.code-intel/index"
+      ]
+    }
+  }
+}
+```
+
+The MCP server uses stdio. Logs go to stderr or files so stdout remains valid MCP JSON-RPC traffic. Tool outputs include structured content, schema metadata, evidence fields, ranking reasons, and bounded result limits.
+
+## Command Surface
+
+Core commands:
+
+```text
+code-intel index
+code-intel update
+code-intel status
+code-intel health
+code-intel search
+code-intel semantic
+code-intel find-symbol
+code-intel references
+code-intel callers
+code-intel callees
+code-intel relationships
+code-intel trace-path
+code-intel expand-context
+code-intel get-context
+code-intel diagnose file
+code-intel diagnose symbol
+code-intel eval
+code-intel benchmark
+code-intel mcp
+```
+
+Use `--json` for deterministic machine-readable output. Human-readable output is intended for TTY use, while non-TTY and JSON modes stay stable for agent and script consumption.
+
+The full command reference is in [docs/cli-reference.md](docs/cli-reference.md).
+
+## Embeddings
+
+The default embedding provider is local Jina through Transformers.js:
+
+```text
+jinaai/jina-embeddings-v2-base-code
+```
+
+The model is downloaded into the configured index model cache on first use unless it is already cached. Use the deterministic hash provider for fast regression checks, offline diagnostics, or comparison runs:
+
+```bash
+code-intel index --workspace /path/to/workspace --embedding-provider hash --json
+```
+
+## Evals And Benchmarks
+
+Run the fast synthetic regression suite:
+
+```bash
+npm run build
+code-intel eval --suite js-ts-general --embedding-provider hash --json
+```
+
+Run the adversarial pack:
+
+```bash
+code-intel eval --eval-pack eval-packs/js-ts-adversarial --embedding-provider hash --json
+```
+
+Run a benchmark:
+
+```bash
+code-intel benchmark --suite js-ts-general --embedding-provider hash --skip-mcp-latency --json
+```
+
+Evals include blocking `required` gates plus non-blocking `target` and `scoreboard` gates for quality tracking.
+
+## Development
+
+```bash
+npm run build
+npm test
+git diff --check
+npm pack --dry-run
+```
+
+Project notes, feature history, verification records, and workflow rules live under [docs/](docs/).

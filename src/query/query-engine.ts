@@ -42,6 +42,11 @@ export interface TracePathOptions extends QueryLimitOptions {
   direction?: GraphTraversalDirection;
 }
 
+export interface RelationshipQueryOptions extends QueryLimitOptions {
+  allowedEdgeKinds?: CodeEdge["kind"][];
+  direction?: GraphTraversalDirection;
+}
+
 export interface QueryEngineRuntimeStats {
   serializedOperations: number;
   queueWaitMs: number;
@@ -147,6 +152,42 @@ export class QueryEngine {
         seen.add(result.id);
         results.push(result);
       }
+    });
+  }
+
+  async getRelationships(seed: string, options: RelationshipQueryOptions): Promise<QueryResult> {
+    return this.runExclusive(async () => {
+      const seedNodes = await this.store.findSymbols(seed, 50);
+      const seedIds = new Set(seedNodes.map((node) => node.id));
+      if (seedIds.size === 0) {
+        return parseQueryResult({ schemaVersion, query: seed, results: [] });
+      }
+
+      const allowedEdgeKinds = new Set(options.allowedEdgeKinds ?? relationshipEdgeKinds);
+      const direction = options.direction ?? "either";
+      const nodes = await this.store.getNodes();
+      const nodesById = new Map(nodes.map((node) => [node.id, node]));
+      const rows = (await this.store.getEdges())
+        .flatMap((edge) => relationshipRowsForEdge(edge, seedIds, nodesById, allowedEdgeKinds, direction))
+        .sort(compareRelationshipRows)
+        .slice(0, options.limit);
+
+      return parseQueryResult({
+        schemaVersion,
+        query: seed,
+        results: rows.map((row) =>
+          nodeToResult(row.node, [`graph_${row.edge.kind.toLowerCase()}`, `relationship_${row.direction}`], {
+            metadata: {
+              ...sanitizeMetadata(row.node),
+              relationship: relationshipMetadata(row.edge.kind, {
+                ...row.edge.metadata,
+                traversalDirection: row.direction,
+                seedId: row.seedId,
+              }),
+            },
+          }),
+        ),
+      });
     });
   }
 
@@ -300,6 +341,83 @@ export class QueryEngine {
     });
   }
 
+}
+
+const relationshipEdgeKinds: CodeEdge["kind"][] = [
+  "CONTAINS",
+  "DEFINES",
+  "IMPORTS",
+  "EXPORTS",
+  "REFERENCES",
+  "CALLS",
+  "EXTENDS",
+  "IMPLEMENTS",
+  "DEPENDS_ON",
+  "HAS_CHUNK",
+  "TESTS",
+  "MENTIONS",
+];
+
+interface RelationshipRow {
+  node: StoredCodeNode;
+  edge: CodeEdge;
+  direction: "incoming" | "outgoing";
+  seedId: string;
+}
+
+function relationshipRowsForEdge(
+  edge: CodeEdge,
+  seedIds: Set<string>,
+  nodesById: Map<string, StoredCodeNode>,
+  allowedEdgeKinds: Set<CodeEdge["kind"]>,
+  direction: GraphTraversalDirection,
+): RelationshipRow[] {
+  if (!allowedEdgeKinds.has(edge.kind)) {
+    return [];
+  }
+  const rows: RelationshipRow[] = [];
+  if ((direction === "incoming" || direction === "either") && seedIds.has(edge.toId)) {
+    const node = nodesById.get(edge.fromId);
+    if (node) {
+      rows.push({ node, edge, direction: "incoming", seedId: edge.toId });
+    }
+  }
+  if ((direction === "outgoing" || direction === "either") && seedIds.has(edge.fromId)) {
+    const node = nodesById.get(edge.toId);
+    if (node) {
+      rows.push({ node, edge, direction: "outgoing", seedId: edge.fromId });
+    }
+  }
+  return rows;
+}
+
+function compareRelationshipRows(left: RelationshipRow, right: RelationshipRow): number {
+  return relationshipRowScore(left) - relationshipRowScore(right) ||
+    left.edge.kind.localeCompare(right.edge.kind) ||
+    (left.node.file ?? "").localeCompare(right.node.file ?? "") ||
+    (left.node.name ?? "").localeCompare(right.node.name ?? "") ||
+    left.node.id.localeCompare(right.node.id);
+}
+
+function relationshipRowScore(row: RelationshipRow): number {
+  let score = 100;
+  const path = row.node.file ?? "";
+  if (row.edge.kind === "CALLS") score -= 22;
+  if (row.edge.kind === "REFERENCES") score -= 18;
+  if (row.edge.kind === "TESTS") score -= 16;
+  if (row.edge.metadata.confidence === "high") score -= 8;
+  if (metadataArrayIncludes(row.edge.metadata.evidenceSources, "scip-typescript")) score -= 7;
+  if (metadataArrayIncludes(row.edge.metadata.evidenceSources, "module-resolution")) score -= 7;
+  if (metadataArrayIncludes(row.edge.metadata.evidenceSources, "tree-sitter-type-reference")) score -= 4;
+  if (row.node.kind === "Function" || row.node.kind === "Class" || row.node.kind === "TypeAlias") score -= 5;
+  if (/\.test\.[cm]?[jt]sx?$|\.spec\.[cm]?[jt]sx?$|\/__tests__\//.test(path)) score -= 4;
+  if (row.direction === "incoming") score -= 2;
+  if (row.edge.kind === "MENTIONS") score += 20;
+  return score;
+}
+
+function metadataArrayIncludes(value: unknown, expected: string): boolean {
+  return Array.isArray(value) && value.includes(expected);
 }
 
 function parseQueryResult(result: QueryResult): QueryResult {

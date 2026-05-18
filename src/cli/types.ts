@@ -37,6 +37,7 @@ export interface CliActions {
   semantic: CliAction;
   findSymbol: CliAction;
   references: CliAction;
+  relationships: CliAction;
   callers: CliAction;
   callees: CliAction;
   expandContext: CliAction;

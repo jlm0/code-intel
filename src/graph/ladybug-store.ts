@@ -181,6 +181,10 @@ export class LadybugGraphStore implements CodeGraphRepository {
     if (exactRows.length > 0) {
       return exactRows.map(rowToNode).slice(0, limit);
     }
+    const exactQualifiedRows = await this.exactQualifiedSymbolRows(nameOrId, limit);
+    if (exactQualifiedRows.length > 0) {
+      return exactQualifiedRows.map(rowToNode).slice(0, limit);
+    }
     const needles = symbolNeedles(nameOrId);
     const textMatches = symbolSearchClauses(needles, nameOrId)
       .join(" OR ");
@@ -218,15 +222,16 @@ export class LadybugGraphStore implements CodeGraphRepository {
         ${nodeReturnClause("node")}, ${cypherValue(edgeKind)} AS edgeKind, edge.metadata AS edgeMetadata
         LIMIT ${candidateLimit}
       `), edgeKind, direction).slice(0, limit);
-      if (rows.length > 0 || edgeKind !== "CALLS" || seed.toLowerCase() !== "default") {
+      if (edgeKind !== "CALLS" || seed.toLowerCase() !== "default") {
         return rows;
       }
-      return rankRelatedRows(await this.relatedRows(`
+      const exportReferenceRows = rankRelatedRows(await this.relatedRows(`
         MATCH (node:CodeNode)-[edge:RELATES]->(seed:CodeNode)
         WHERE seed.id IN ${cypherValue(seedIds)} AND edge.kind IN ['EXPORTS', 'REFERENCES']
         ${nodeReturnClause("node")}, edge.kind AS edgeKind, edge.metadata AS edgeMetadata
         LIMIT ${candidateLimit}
-      `), edgeKind, direction).slice(0, limit);
+      `), edgeKind, direction);
+      return mergeRelatedRows(rows, exportReferenceRows, limit);
     }
     return rankRelatedRows(await this.relatedRows(`
       MATCH (seed:CodeNode)-[edge:${edgeKind}]->(node:CodeNode)
@@ -563,6 +568,10 @@ export class LadybugGraphStore implements CodeGraphRepository {
     if (exactRows.length > 0) {
       return exactRows.map(rowToNode).slice(0, limit);
     }
+    const exactQualifiedRows = await this.exactQualifiedSymbolRows(seed, limit, includeContent);
+    if (exactQualifiedRows.length > 0) {
+      return exactQualifiedRows.map(rowToNode).slice(0, limit);
+    }
     const needles = symbolNeedles(seed);
     const textMatches = symbolSearchClauses(needles, seed)
       .join(" OR ");
@@ -578,6 +587,24 @@ export class LadybugGraphStore implements CodeGraphRepository {
       exactSeedRank(left, seed) - exactSeedRank(right, seed) ||
       compareSymbols(left, right, lowered)
     )).slice(0, limit);
+  }
+
+  private async exactQualifiedSymbolRows(
+    seed: string,
+    limit: number,
+    includeContent = false,
+  ): Promise<Record<string, unknown>[]> {
+    if (!shouldSearchSymbolMetadata(seed)) {
+      return [];
+    }
+    const qualifiedNeedle = `"qualifiedname":"${seed.toLowerCase()}"`;
+    return this.rows(`
+      MATCH (n:CodeNode)
+      WHERE n.kind IN ${cypherValue(findableSymbolKinds)}
+        AND lower(n.metadata) CONTAINS ${cypherValue(qualifiedNeedle)}
+      ${nodeReturnClause("n", includeContent)}
+      LIMIT ${limit}
+    `);
   }
 
   private async writeActivePointer(generationId: string): Promise<void> {

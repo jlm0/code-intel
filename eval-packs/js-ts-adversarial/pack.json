@@ -12,8 +12,21 @@
   },
   "caseFiles": [
     "cases/adversarial-queries.json",
-    "cases/adversarial-ranking.json"
+    "cases/adversarial-ranking.json",
+    "cases/type-precision-queries.json"
   ],
-  "astCaseFiles": ["cases/adversarial-ast.json"],
-  "graphCaseFiles": ["cases/adversarial-graph.json"]
+  "astCaseFiles": [
+    "cases/adversarial-ast.json",
+    "cases/type-precision-ast.json"
+  ],
+  "graphCaseFiles": [
+    "cases/adversarial-graph.json",
+    "cases/type-precision-graph.json"
+  ],
+  "mcpCaseFiles": [
+    "cases/mcp-agent-readiness.json"
+  ],
+  "cliMcpCaseFiles": [
+    "cases/cli-mcp-parity.json"
+  ]
 }

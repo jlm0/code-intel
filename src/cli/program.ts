@@ -1,5 +1,6 @@
 import { Command } from "commander";
 
+import { EdgeKindSchema } from "../schema/schemas.js";
 import { createDefaultActions } from "./actions.js";
 import { renderResult } from "./presenter.js";
 import type { CliAction, CliActions, CliOptions, CliRuntime } from "./types.js";
@@ -32,12 +33,15 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
   registerCommand(program, "semantic <query>", "Run semantic code search.", actions.semantic, runtime);
   registerCommand(program, "find-symbol <name>", "Find symbols by name.", actions.findSymbol, runtime);
   registerCommand(program, "references <symbol>", "Find references to a symbol.", actions.references, runtime);
+  registerCommand(program, "relationships <seed>", "Browse typed graph relationships around a symbol or node seed.", actions.relationships, runtime, {
+    addOptions: addGraphTraversalOptions,
+  });
   registerCommand(program, "callers <symbol>", "Find callers of a symbol.", actions.callers, runtime);
   registerCommand(program, "callees <symbol>", "Find callees of a symbol.", actions.callees, runtime);
   registerCommand(program, "expand-context <nodeId>", "Expand graph context around a node.", actions.expandContext, runtime);
   registerCommand(program, "get-context <nodeId>", "Return bounded source context for a node.", actions.getContext, runtime);
   registerCommand(program, "trace-path <fromId> <toId>", "Trace a graph path between two nodes.", actions.tracePath, runtime, {
-    addOptions: addTracePathOptions,
+    addOptions: addGraphTraversalOptions,
   });
   const diagnose = program.command("diagnose").description("Inspect index coverage and queryability diagnostics.");
   registerCommand(diagnose, "file <path>", "Explain whether a file was fetched, discovered, indexed, graphed, embedded, and queryable.", actions.diagnoseFile, runtime);
@@ -112,7 +116,7 @@ function normalizeOptions(options: Record<string, unknown>): CliOptions {
     filterPackage: typeof options.filterPackage === "string" ? options.filterPackage : undefined,
     fileKind: typeof options.fileKind === "string" ? options.fileKind : undefined,
     symbolKind: typeof options.symbolKind === "string" ? options.symbolKind : undefined,
-    edgeKind: Array.isArray(options.edgeKind) ? (options.edgeKind.map(String) as CliOptions["edgeKind"]) : undefined,
+    edgeKind: normalizeEdgeKinds(options.edgeKind),
     direction: normalizeDirection(options.direction),
     suite: typeof options.suite === "string" ? options.suite : undefined,
     evalPack: typeof options.evalPack === "string" ? options.evalPack : undefined,
@@ -146,9 +150,9 @@ function addEvalOptions(command: Command): void {
     .option("--diagnostics", "Include eval preflight diagnostics for expected and notExpected files.", false);
 }
 
-function addTracePathOptions(command: Command): void {
+function addGraphTraversalOptions(command: Command): void {
   command
-    .option("--edge-kind <kind...>", "Restrict trace-path traversal to one or more graph edge kinds.")
+    .option("--edge-kind <kind...>", "Restrict graph traversal to one or more graph edge kinds.")
     .option("--direction <direction>", "Graph traversal direction: outgoing, incoming, or either.");
 }
 
@@ -178,4 +182,21 @@ function normalizeDirection(value: unknown): CliOptions["direction"] {
     return value;
   }
   throw new Error(`Expected --direction to be outgoing, incoming, or either, received ${String(value)}`);
+}
+
+function normalizeEdgeKinds(value: unknown): CliOptions["edgeKind"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected --edge-kind to receive one or more graph edge kinds`);
+  }
+  return value.map((item) => {
+    const raw = String(item);
+    const parsed = EdgeKindSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`Expected --edge-kind to be a known graph edge kind, received ${raw}`);
+    }
+    return parsed.data;
+  });
 }

@@ -20,9 +20,7 @@ export interface EmbeddingProviderOptions {
   indexPath?: string;
 }
 
-export async function createEmbeddingProvider(
-  options: EmbeddingProviderOptions = {},
-): Promise<EmbeddingProvider> {
+export async function createEmbeddingProvider(options: EmbeddingProviderOptions = {}): Promise<EmbeddingProvider> {
   const providerName = normalizeProviderName(options.provider ?? process.env.CODE_INTEL_EMBEDDING_PROVIDER);
   if (providerName === "jina") {
     return new JinaEmbeddingProvider({
@@ -95,13 +93,9 @@ class JinaEmbeddingProvider implements EmbeddingProvider {
   private async getExtractor(): Promise<FeatureExtractionPipeline> {
     if (!this.extractor) {
       const transformers = await import("@huggingface/transformers");
-      this.extractor = await transformers.pipeline(
-        "feature-extraction",
-        this.options.model,
-        {
-          cache_dir: join(this.options.cachePath),
-        },
-      );
+      this.extractor = await transformers.pipeline("feature-extraction", this.options.model, {
+        cache_dir: join(this.options.cachePath),
+      });
     }
     return this.extractor;
   }
@@ -143,8 +137,5 @@ function normalizeVector(vector: number[]): number[] {
 }
 
 type FeatureExtractionPipeline = {
-  (
-    texts: string | string[],
-    options?: { pooling?: "mean"; normalize?: boolean },
-  ): Promise<{ tolist(): unknown }>;
+  (texts: string | string[], options?: { pooling?: "mean"; normalize?: boolean }): Promise<{ tolist(): unknown }>;
 };

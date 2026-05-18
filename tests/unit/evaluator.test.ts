@@ -175,4 +175,40 @@ describe("runEvalSuite", () => {
       "graph",
     ]);
   });
+
+  it("loads adversarial MCP agent-readiness eval cases", async () => {
+    const loadedPack = await loadEvalPack({
+      evalPackPath: "eval-packs/js-ts-adversarial",
+      workspaceRoot: process.cwd(),
+    });
+    const mcpCases = (loadedPack as unknown as {
+      mcpCases?: Array<{ id: string; gate: { status: string; layer: string } }>;
+    }).mcpCases;
+
+    expect(mcpCases?.map((testCase) => testCase.id)).toEqual([
+      "adv.mcp.agent-readiness-workflow",
+    ]);
+    expect(mcpCases?.[0].gate).toMatchObject({
+      status: "required",
+      layer: "mcp",
+    });
+  });
+
+  it("loads adversarial CLI/MCP parity eval cases", async () => {
+    const loadedPack = await loadEvalPack({
+      evalPackPath: "eval-packs/js-ts-adversarial",
+      workspaceRoot: process.cwd(),
+    });
+    const cliMcpCases = (loadedPack as unknown as {
+      cliMcpCases?: Array<{ id: string; gate: { status: string; layer: string } }>;
+    }).cliMcpCases;
+
+    expect(cliMcpCases?.map((testCase) => testCase.id)).toEqual([
+      "adv.cli-mcp.agent-surface-parity",
+    ]);
+    expect(cliMcpCases?.[0].gate).toMatchObject({
+      status: "required",
+      layer: "cli-mcp-parity",
+    });
+  });
 });

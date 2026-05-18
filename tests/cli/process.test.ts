@@ -15,6 +15,17 @@ describe("code-intel process behavior", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: code-intel");
+    expect(result.stdout).toContain("relationships");
+    expect(result.stderr).toBe("");
+  });
+
+  it("prints relationship command help with graph filters", async () => {
+    const result = await execa("node", [cliPath, "relationships", "--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: code-intel relationships");
+    expect(result.stdout).toContain("--edge-kind");
+    expect(result.stdout).toContain("--direction");
     expect(result.stderr).toBe("");
   });
 
@@ -91,6 +102,7 @@ describe("code-intel process behavior", () => {
       ]);
       const symbolPayload = JSON.parse(symbolResult.stdout);
       expect(symbolPayload.results[0].file).toBe("packages/core/src/tithe.ts");
+      expect(symbolResult.stdout).toMatch(/^\{\n  "query": "calculateGivingTotal",\n  "results": \[/);
 
       const callersResult = await execa("node", [
         cliPath,
@@ -105,6 +117,32 @@ describe("code-intel process behavior", () => {
       expect(JSON.parse(callersResult.stdout).results.map((item: { file?: string }) => item.file)).toContain(
         "packages/core/src/ledger.ts",
       );
+
+      const relationshipsResult = await execa("node", [
+        cliPath,
+        "relationships",
+        "calculateGivingTotal",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--edge-kind",
+        "CALLS",
+        "REFERENCES",
+        "--direction",
+        "incoming",
+        "--limit",
+        "10",
+        "--json",
+      ]);
+      const relationshipsPayload = JSON.parse(relationshipsResult.stdout);
+      expect(relationshipsPayload.results.map((item: { file?: string }) => item.file)).toEqual(
+        expect.arrayContaining(["packages/core/src/ledger.ts", "packages/core/src/tithe.test.ts"]),
+      );
+      expect(relationshipsPayload.results.every((item: { excerpt?: string }) => item.excerpt === undefined)).toBe(true);
+      expect(relationshipsPayload.results.some((item: { metadata: { relationship?: { evidenceSources?: string[] } } }) =>
+        item.metadata.relationship?.evidenceSources?.length,
+      )).toBe(true);
 
       const fileDiagnosticResult = await execa("node", [
         cliPath,
@@ -149,6 +187,23 @@ describe("code-intel process behavior", () => {
           }),
         ]),
       }));
+
+      const contextResult = await execa("node", [
+        cliPath,
+        "get-context",
+        symbolPayload.results[0].id,
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--limit",
+        "1",
+        "--json",
+      ]);
+      const contextPayload = JSON.parse(contextResult.stdout);
+      expect(contextPayload.results).toHaveLength(1);
+      expect(contextPayload.results[0].excerpt).toMatch(/calculateGivingTotal/);
+      expect(Buffer.byteLength(contextPayload.results[0].excerpt, "utf8")).toBeLessThanOrEqual(16_000);
     } finally {
       await rm(indexPath, { recursive: true, force: true });
     }
@@ -307,5 +362,14 @@ describe("code-intel process behavior", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("Expected --limit to be at most 50");
+  });
+
+  it("rejects invalid relationship directions", async () => {
+    const result = await execa("node", [cliPath, "relationships", "value", "--direction", "sideways"], {
+      reject: false,
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Expected --direction to be outgoing, incoming, or either");
   });
 });

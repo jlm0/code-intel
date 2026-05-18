@@ -5,16 +5,7 @@ import { spawnSync } from "node:child_process";
 import { normalizeRelativePath } from "../core/ids.js";
 import { directoryIsIgnored } from "./ignore.js";
 
-const sourceExtensions = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mts",
-  ".cts",
-  ".mjs",
-  ".cjs",
-]);
+const sourceExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 
 export interface DiscoverWorkspaceInput {
   workspaceRoot: string;
@@ -68,27 +59,18 @@ export interface DiscoveryFileDiagnostic {
   relativePath: string;
   kind: "file" | "directory";
   status: "included" | "excluded";
-  reason:
-    | "source-file"
-    | "ignored-directory"
-    | "unsupported-extension"
-    | "tsconfig-excluded";
+  reason: "source-file" | "ignored-directory" | "unsupported-extension" | "tsconfig-excluded";
   packageName?: string;
   language?: DiscoveredFile["language"];
 }
 
-export async function discoverWorkspace(
-  input: DiscoverWorkspaceInput,
-): Promise<DiscoveredWorkspace> {
+export async function discoverWorkspace(input: DiscoverWorkspaceInput): Promise<DiscoveredWorkspace> {
   const workspaceRoot = resolve(input.workspaceRoot);
   const rootPackage = await readPackageJson(workspaceRoot);
   const workspaceName = rootPackage?.name ?? basename(workspaceRoot);
   const manifestRepoPaths = await readWorkspaceManifest(workspaceRoot, input.workspaceManifestPath);
-  const repoPaths = input.repoPaths.length > 0
-    ? input.repoPaths
-    : manifestRepoPaths.length > 0
-      ? manifestRepoPaths
-      : [workspaceRoot];
+  const repoPaths =
+    input.repoPaths.length > 0 ? input.repoPaths : manifestRepoPaths.length > 0 ? manifestRepoPaths : [workspaceRoot];
   const discoveredRepos = await Promise.all(
     repoPaths.map((repoPath) =>
       discoverRepo(workspaceRoot, resolve(workspaceRoot, repoPath), {
@@ -117,9 +99,7 @@ async function discoverRepo(
   const repoPackage = await readPackageJson(repoPath);
   const packageManager = await detectPackageManager(repoPath);
   const packagePaths = await discoverPackagePaths(repoPath, repoPackage, options);
-  const packages = await Promise.all(
-    packagePaths.map((packagePath) => discoverPackage(workspaceRoot, packagePath)),
-  );
+  const packages = await Promise.all(packagePaths.map((packagePath) => discoverPackage(workspaceRoot, packagePath)));
   const diagnostics: DiscoveryFileDiagnostic[] = [];
   const files = await discoverSourceFiles(repoPath, packages, options, diagnostics);
 
@@ -179,16 +159,15 @@ async function discoverPackagePaths(
 function workspacePatternIncludesPackage(repoPath: string, pattern: string, packagePath: string): boolean {
   const relativePackagePath = normalizeRelativePath(relative(repoPath, packagePath));
   const root = globRoot(pattern).replace(/\/$/, "");
-  return relativePackagePath !== "." &&
+  return (
+    relativePackagePath !== "." &&
     ((root !== "." && relativePackagePath.startsWith(`${root}/`)) ||
       matchesGlob(pattern, relativePackagePath) ||
-      matchesGlob(pattern, `${relativePackagePath}/package.json`));
+      matchesGlob(pattern, `${relativePackagePath}/package.json`))
+  );
 }
 
-async function discoverPackage(
-  workspaceRoot: string,
-  packagePath: string,
-): Promise<DiscoveredPackage> {
+async function discoverPackage(workspaceRoot: string, packagePath: string): Promise<DiscoveredPackage> {
   const packageJson = await readPackageJson(packagePath);
   const projectConfig = await readProjectConfig(packagePath);
   return {
@@ -217,63 +196,68 @@ async function discoverSourceFiles(
   const files: DiscoveredFile[] = [];
   const repoName = basename(repoPath);
 
-  await walk(repoPath, options, async (absolutePath) => {
-    const extension = getExtension(absolutePath);
-    if (!sourceExtensions.has(extension)) {
-      if (isSupportedConfigFile(absolutePath)) {
+  await walk(
+    repoPath,
+    options,
+    async (absolutePath) => {
+      const extension = getExtension(absolutePath);
+      if (!sourceExtensions.has(extension)) {
+        if (isSupportedConfigFile(absolutePath)) {
+          return;
+        }
+        diagnostics.push({
+          repo: repoName,
+          absolutePath,
+          relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
+          kind: "file",
+          status: "excluded",
+          reason: "unsupported-extension",
+        });
         return;
       }
-      diagnostics.push({
-        repo: repoName,
+      const matchingPackage = packageByPath.find((pkg) => absolutePath.startsWith(`${pkg.path}/`));
+      if (matchingPackage && !packageIncludesFile(matchingPackage, absolutePath)) {
+        diagnostics.push({
+          repo: repoName,
+          absolutePath,
+          relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
+          kind: "file",
+          status: "excluded",
+          reason: "tsconfig-excluded",
+          packageName: matchingPackage.name,
+          language: languageForPath(absolutePath),
+        });
+        return;
+      }
+      const discoveredFile = {
         absolutePath,
         relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
-        kind: "file",
-        status: "excluded",
-        reason: "unsupported-extension",
-      });
-      return;
-    }
-    const matchingPackage = packageByPath.find((pkg) => absolutePath.startsWith(`${pkg.path}/`));
-    if (matchingPackage && !packageIncludesFile(matchingPackage, absolutePath)) {
-      diagnostics.push({
-        repo: repoName,
-        absolutePath,
-        relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
-        kind: "file",
-        status: "excluded",
-        reason: "tsconfig-excluded",
-        packageName: matchingPackage.name,
+        packageName: matchingPackage?.name,
         language: languageForPath(absolutePath),
+      } satisfies DiscoveredFile;
+      files.push(discoveredFile);
+      diagnostics.push({
+        repo: repoName,
+        absolutePath,
+        relativePath: discoveredFile.relativePath,
+        kind: "file",
+        status: "included",
+        reason: "source-file",
+        packageName: matchingPackage?.name,
+        language: discoveredFile.language,
       });
-      return;
-    }
-    const discoveredFile = {
-      absolutePath,
-      relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
-      packageName: matchingPackage?.name,
-      language: languageForPath(absolutePath),
-    } satisfies DiscoveredFile;
-    files.push(discoveredFile);
-    diagnostics.push({
-      repo: repoName,
-      absolutePath,
-      relativePath: discoveredFile.relativePath,
-      kind: "file",
-      status: "included",
-      reason: "source-file",
-      packageName: matchingPackage?.name,
-      language: discoveredFile.language,
-    });
-  }, (absolutePath) => {
-    diagnostics.push({
-      repo: repoName,
-      absolutePath,
-      relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
-      kind: "directory",
-      status: "excluded",
-      reason: "ignored-directory",
-    });
-  });
+    },
+    (absolutePath) => {
+      diagnostics.push({
+        repo: repoName,
+        absolutePath,
+        relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
+        kind: "directory",
+        status: "excluded",
+        reason: "ignored-directory",
+      });
+    },
+  );
 
   return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
@@ -300,10 +284,12 @@ async function walk(
 
 function isSupportedConfigFile(path: string): boolean {
   const filename = basename(path);
-  return filename === "package.json" ||
+  return (
+    filename === "package.json" ||
     filename === "tsconfig.json" ||
     filename === "tsconfig.base.json" ||
-    filename === "jsconfig.json";
+    filename === "jsconfig.json"
+  );
 }
 
 async function findPackageJsonFiles(root: string, options: DiscoverOptions): Promise<string[]> {
@@ -401,7 +387,7 @@ async function inferSourceRoots(packagePath: string, config: ProjectConfig | und
   }
   if (roots.size === 0) {
     const sourceRoot = join(packagePath, "src");
-    roots.add(await directoryExists(sourceRoot) ? sourceRoot : packagePath);
+    roots.add((await directoryExists(sourceRoot)) ? sourceRoot : packagePath);
   }
   return [...roots].sort();
 }
@@ -492,12 +478,12 @@ function stripJsonComments(text: string): string {
         escaped = false;
       } else if (char === "\\") {
         escaped = true;
-      } else if (char === "\"") {
+      } else if (char === '"') {
         inString = false;
       }
       continue;
     }
-    if (char === "\"") {
+    if (char === '"') {
       inString = true;
       output += char;
       continue;
@@ -538,11 +524,7 @@ function normalizeWorkspacePatterns(workspaces: unknown): string[] {
   if (Array.isArray(workspaces)) {
     return workspaces.filter((pattern): pattern is string => typeof pattern === "string");
   }
-  if (
-    workspaces &&
-    typeof workspaces === "object" &&
-    Array.isArray((workspaces as { packages?: unknown }).packages)
-  ) {
+  if (workspaces && typeof workspaces === "object" && Array.isArray((workspaces as { packages?: unknown }).packages)) {
     return (workspaces as { packages: unknown[] }).packages.filter(
       (pattern): pattern is string => typeof pattern === "string",
     );

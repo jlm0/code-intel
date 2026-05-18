@@ -71,9 +71,12 @@ describe("MCP stdio server", () => {
           "get_references",
           "get_callers",
           "get_callees",
+          "get_relationships",
           "expand_context",
           "get_context",
           "trace_path",
+          "diagnose_file",
+          "diagnose_symbol",
         ]),
       );
       expect(tools.tools.find((tool) => tool.name === "semantic_search")?.description).toContain(
@@ -82,9 +85,13 @@ describe("MCP stdio server", () => {
       expect(tools.tools.find((tool) => tool.name === "trace_path")?.description).toContain(
         "evidence",
       );
+      for (const tool of tools.tools.filter((tool) => tool.name !== undefined)) {
+        expect(tool.outputSchema, `${tool.name} should advertise structured output`).toBeDefined();
+      }
 
       const health = await client.callTool({ name: "health", arguments: {} });
-      expect(parseToolText(health)).toMatchObject({
+      const healthPayload = parseStructuredTool(health);
+      expect(healthPayload).toMatchObject({
         tool: "health",
         guidance: {
           nextTools: expect.arrayContaining(["workspace_overview", "semantic_search"]),
@@ -95,20 +102,20 @@ describe("MCP stdio server", () => {
         name: "find_symbol",
         arguments: { name: "calculateGivingTotal", limit: 5 },
       });
-      const symbolPayload = parseToolText(symbol);
+      const symbolPayload = parseStructuredTool(symbol);
       expect(symbolPayload.result.results[0].file).toBe(
         "packages/core/src/tithe.ts",
       );
 
       const symbolId = symbolPayload.result.results[0].id;
       const overview = await client.callTool({ name: "workspace_overview", arguments: {} });
-      expect(parseToolText(overview).result.indexed).toBe(true);
+      expect(parseStructuredTool(overview).result.indexed).toBe(true);
 
       const text = await client.callTool({
         name: "search_text",
         arguments: { pattern: "calculateGivingTotal(", limit: 5 },
       });
-      expect(parseToolText(text).result.results.map((item: { file?: string }) => item.file)).toContain(
+      expect(parseStructuredTool(text).result.results.map((item: { file?: string }) => item.file)).toContain(
         "packages/core/src/tithe.ts",
       );
 
@@ -116,9 +123,11 @@ describe("MCP stdio server", () => {
         name: "semantic_search",
         arguments: { query: "giving receipt summary", limit: 5, packageName: "@fixture/core" },
       });
-      const semanticPayload = parseToolText(semantic);
+      const semanticPayload = parseStructuredTool(semantic);
       expect(semanticPayload.result.results.length).toBeGreaterThan(0);
       expect(semanticPayload.result.results[0].metadata).not.toHaveProperty("content");
+      expect(semanticPayload.result.results[0]).not.toHaveProperty("excerpt");
+      expect(semanticPayload.result.results[0].metadata.ranking.reasons.length).toBeGreaterThan(0);
       expect(semanticPayload.guidance).toMatchObject({
         purpose: expect.stringContaining("conceptually relevant code"),
         evidenceFields: expect.arrayContaining(["metadata.ranking.reasons"]),
@@ -129,14 +138,38 @@ describe("MCP stdio server", () => {
         name: "get_context",
         arguments: { nodeId: semanticPayload.result.results[0].id, limit: 1 },
       });
-      expect(parseToolText(context).result.results[0].excerpt).toMatch(/giving/i);
+      expect(parseStructuredTool(context).result.results[0].excerpt).toMatch(/giving/i);
 
       const references = await client.callTool({
         name: "get_references",
         arguments: { symbol: "calculateGivingTotal", limit: 10 },
       });
-      expect(parseToolText(references).result.results.map((item: { file?: string }) => item.file)).toContain(
+      const referencesPayload = parseStructuredTool(references);
+      expect(referencesPayload.result.results.map((item: { file?: string }) => item.file)).toContain(
         "packages/core/src/tithe.test.ts",
+      );
+      expect(referencesPayload.result.results.some((item: { metadata: { relationship?: { evidenceSources?: string[] } } }) =>
+        item.metadata.relationship?.evidenceSources?.length,
+      )).toBe(true);
+
+      const relationships = await client.callTool({
+        name: "get_relationships",
+        arguments: {
+          seed: "calculateGivingTotal",
+          direction: "incoming",
+          allowedEdgeKinds: ["CALLS", "REFERENCES"],
+          limit: 10,
+        },
+      });
+      const relationshipsPayload = parseStructuredTool(relationships);
+      expect(relationshipsPayload.guidance.nextTools).toEqual(
+        expect.arrayContaining(["trace_path", "get_context"]),
+      );
+      expect(relationshipsPayload.result.results.map((item: { file?: string }) => item.file)).toContain(
+        "packages/core/src/tithe.test.ts",
+      );
+      expect(relationshipsPayload.result.results.every((item: { excerpt?: string }) => item.excerpt === undefined)).toBe(
+        true,
       );
 
       const [parallelSymbol, parallelSemantic, parallelCallers] = await Promise.all([
@@ -153,9 +186,9 @@ describe("MCP stdio server", () => {
           arguments: { symbol: "calculateGivingTotal", limit: 10 },
         }),
       ]);
-      expect(parseToolText(parallelSymbol).result.results[0].file).toBe("packages/core/src/tithe.ts");
-      expect(parseToolText(parallelSemantic).result.results.length).toBeGreaterThan(0);
-      expect(parseToolText(parallelCallers).result.results.map((item: { file?: string }) => item.file)).toContain(
+      expect(parseStructuredTool(parallelSymbol).result.results[0].file).toBe("packages/core/src/tithe.ts");
+      expect(parseStructuredTool(parallelSemantic).result.results.length).toBeGreaterThan(0);
+      expect(parseStructuredTool(parallelCallers).result.results.map((item: { file?: string }) => item.file)).toContain(
         "packages/core/src/ledger.ts",
       );
 
@@ -163,7 +196,7 @@ describe("MCP stdio server", () => {
         name: "get_callers",
         arguments: { symbol: "calculateGivingTotal", limit: 10 },
       });
-      expect(parseToolText(callers).result.results.map((item: { file?: string }) => item.file)).toContain(
+      expect(parseStructuredTool(callers).result.results.map((item: { file?: string }) => item.file)).toContain(
         "packages/core/src/ledger.ts",
       );
 
@@ -171,7 +204,7 @@ describe("MCP stdio server", () => {
         name: "get_callees",
         arguments: { symbol: "summarize", limit: 10 },
       });
-      expect(parseToolText(callees).result.results.map((item: { file?: string }) => item.file)).toContain(
+      expect(parseStructuredTool(callees).result.results.map((item: { file?: string }) => item.file)).toContain(
         "packages/core/src/tithe.ts",
       );
 
@@ -179,13 +212,13 @@ describe("MCP stdio server", () => {
         name: "expand_context",
         arguments: { nodeId: semanticPayload.result.results[0].id, depth: 1, limit: 10 },
       });
-      expect(parseToolText(expanded).result.results.length).toBeGreaterThan(0);
+      expect(parseStructuredTool(expanded).result.results.length).toBeGreaterThan(0);
 
       const getSymbol = await client.callTool({
         name: "get_symbol",
         arguments: { idOrName: symbolId },
       });
-      expect(parseToolText(getSymbol).result.results[0].id).toBe(symbolId);
+      expect(parseStructuredTool(getSymbol).result.results[0].id).toBe(symbolId);
 
       const summarize = await client.callTool({
         name: "find_symbol",
@@ -194,7 +227,7 @@ describe("MCP stdio server", () => {
       const trace = await client.callTool({
         name: "trace_path",
         arguments: {
-          fromId: parseToolText(summarize).result.results[0].id,
+          fromId: parseStructuredTool(summarize).result.results[0].id,
           toId: symbolId,
           limit: 10,
           maxDepth: 4,
@@ -202,11 +235,45 @@ describe("MCP stdio server", () => {
           direction: "outgoing",
         },
       });
-      const tracePayload = parseToolText(trace);
+      const tracePayload = parseStructuredTool(trace);
       expect(tracePayload.result.results.map((item: { id: string }) => item.id)).toContain(symbolId);
       expect(tracePayload.result.results.some((item: { metadata: Record<string, unknown> }) =>
         Array.isArray(item.metadata.pathEdges),
       )).toBe(true);
+
+      const diagnoseFile = await client.callTool({
+        name: "diagnose_file",
+        arguments: { path: "packages/core/src/tithe.ts" },
+      });
+      expect(parseStructuredTool(diagnoseFile)).toMatchObject({
+        tool: "diagnose_file",
+        result: {
+          matched: true,
+          file: {
+            relativePath: "packages/core/src/tithe.ts",
+            queryability: {
+              semantic: true,
+            },
+          },
+        },
+      });
+
+      const diagnoseSymbol = await client.callTool({
+        name: "diagnose_symbol",
+        arguments: { name: "calculateGivingTotal" },
+      });
+      expect(parseStructuredTool(diagnoseSymbol)).toMatchObject({
+        tool: "diagnose_symbol",
+        result: {
+          matched: true,
+          symbols: expect.arrayContaining([
+            expect.objectContaining({
+              name: "calculateGivingTotal",
+              file: "packages/core/src/tithe.ts",
+            }),
+          ]),
+        },
+      });
 
       const invalid = await client.callTool({
         name: "find_symbol",
@@ -215,7 +282,7 @@ describe("MCP stdio server", () => {
       expect(invalid.isError).toBe(true);
 
       const healthAfterQuery = await client.callTool({ name: "health", arguments: {} });
-      expect(parseToolText(healthAfterQuery).tool).toBe("health");
+      expect(parseStructuredTool(healthAfterQuery).tool).toBe("health");
     } finally {
       await client.close();
       await rm(indexPath, { recursive: true, force: true });
@@ -276,19 +343,19 @@ describe("MCP stdio server", () => {
         name: "find_symbol",
         arguments: { name: "createBlessingNote", limit: 5 },
       });
-      expect(parseToolText(symbol).result.results[0].file).toBe("packages/core/src/blessing.ts");
+      expect(parseStructuredTool(symbol).result.results[0].file).toBe("packages/core/src/blessing.ts");
 
       const deletedSymbol = await client.callTool({
         name: "find_symbol",
         arguments: { name: "PrimaryRenderer", limit: 5 },
       });
-      expect(parseToolText(deletedSymbol).result.results).toEqual([]);
+      expect(parseStructuredTool(deletedSymbol).result.results).toEqual([]);
 
       const references = await client.callTool({
         name: "get_references",
         arguments: { symbol: "calculateGivingTotal", limit: 20 },
       });
-      expect(parseToolText(references).result.results.map((item: { file?: string }) => item.file)).not.toContain(
+      expect(parseStructuredTool(references).result.results.map((item: { file?: string }) => item.file)).not.toContain(
         "packages/core/src/tithe.test.ts",
       );
 
@@ -296,7 +363,7 @@ describe("MCP stdio server", () => {
         name: "semantic_search",
         arguments: { query: "primary renderer", limit: 5, fileKind: "source" },
       });
-      expect(parseToolText(semantic).result.results.map((item: { file?: string }) => item.file)).not.toContain(
+      expect(parseStructuredTool(semantic).result.results.map((item: { file?: string }) => item.file)).not.toContain(
         "packages/core/src/duplicateMethods.ts",
       );
     } finally {
@@ -306,6 +373,35 @@ describe("MCP stdio server", () => {
     }
   }, 60_000);
 });
+
+function parseStructuredTool(result: {
+  content: Array<{ type: string; text?: string }>;
+  structuredContent?: Record<string, unknown>;
+}) {
+  expect(result.structuredContent).toBeDefined();
+  const textPayload = parseToolText(result);
+  expect(result.structuredContent).toEqual(textPayload);
+  return result.structuredContent as {
+    tool: string;
+    guidance: { nextTools: string[] };
+    result: {
+      indexed?: boolean;
+      matched?: boolean;
+      file?: unknown;
+      symbols?: unknown[];
+      results: Array<{
+        id: string;
+        file?: string;
+        excerpt?: string;
+        metadata: {
+          ranking?: { reasons: unknown[] };
+          relationship?: { evidenceSources?: string[] };
+          pathEdges?: unknown[];
+        };
+      }>;
+    };
+  };
+}
 
 function parseToolText(result: { content: Array<{ type: string; text?: string }> }) {
   const text = result.content.find((item) => item.type === "text")?.text;

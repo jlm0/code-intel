@@ -30,6 +30,7 @@ export interface ApplyRelationshipGraphFactsInput {
 
 export function applyRelationshipGraphFacts(input: ApplyRelationshipGraphFactsInput): void {
   applyTypeRelationshipEdges(input);
+  applyTypeReferenceEdges(input);
   applyStaticCallRelationshipEdges(input);
   applyAmbientModuleRelationships(input);
   applyDynamicTemplateImportRelationships(input);
@@ -41,6 +42,34 @@ export function applyRelationshipGraphFacts(input: ApplyRelationshipGraphFactsIn
   applyApiClientRelationships(input);
   applyTransitiveCallRelationshipEdges(input);
   promoteCallEvidenceEdges(input);
+}
+
+function applyTypeReferenceEdges(input: ApplyRelationshipGraphFactsInput): void {
+  const symbols = allSymbols(input);
+  for (const [relativePath, fileFact] of input.fileFactsByRelativePath) {
+    for (const typeReference of fileFact.typeReferences ?? []) {
+      const sourceSymbols = symbolsContainingTypeReference(input, relativePath, typeReference);
+      if (sourceSymbols.length === 0) {
+        continue;
+      }
+      const targets = typeReferenceTargets(symbols, typeReference, relativePath);
+      for (const source of sourceSymbols) {
+        for (const target of targets) {
+          if (source.id === target.id) {
+            continue;
+          }
+          input.addEdge(
+            "REFERENCES",
+            source.id,
+            target.id,
+            input.workspaceName,
+            input.repo.name,
+            typeReferenceMetadata(input.repo.name, relativePath, typeReference, target),
+          );
+        }
+      }
+    }
+  }
 }
 
 function applyImportedMemberCallEdges(input: ApplyRelationshipGraphFactsInput): void {
@@ -707,6 +736,21 @@ function symbolsContainingCall(
   );
 }
 
+function symbolsContainingTypeReference(
+  input: ApplyRelationshipGraphFactsInput,
+  relativePath: string,
+  typeReference: FileFact["typeReferences"][number],
+): CodeNode[] {
+  const containingName = typeReference.containingDeclarationName;
+  const containers = (input.astSymbolsByFile.get(relativePath) ?? []).filter((symbol) =>
+    symbol.range && rangeContains(symbol.range, typeReference.range)
+  );
+  const exactContainers = containingName
+    ? containers.filter((symbol) => symbolNameMatches(symbol, containingName))
+    : [];
+  return uniqueNodes([...exactContainers, ...containers]);
+}
+
 function conventionMetadata(input: {
   repo: string;
   file: string;
@@ -866,6 +910,18 @@ function findSymbolByName(symbols: CodeNode[], name: string, preferredFile?: str
     )[0];
 }
 
+function typeReferenceTargets(
+  symbols: CodeNode[],
+  typeReference: FileFact["typeReferences"][number],
+  preferredFile?: string,
+): CodeNode[] {
+  const names = [...new Set([typeReference.referenceText, typeReference.name])];
+  const targets = names
+    .map((name) => findSymbolByName(symbols, name, preferredFile))
+    .filter((node): node is CodeNode => Boolean(node));
+  return uniqueNodes(targets);
+}
+
 function staticCallTargets(
   input: ApplyRelationshipGraphFactsInput,
   symbols: CodeNode[],
@@ -1009,6 +1065,34 @@ function typeRelationshipMetadata(
     confidence: "high",
     range,
     roles: ["Definition"],
+  };
+}
+
+function typeReferenceMetadata(
+  repo: string,
+  file: string,
+  typeReference: FileFact["typeReferences"][number],
+  target: CodeNode,
+): Record<string, unknown> {
+  return {
+    ownerRepo: repo,
+    ownerFile: file,
+    origin: "tree-sitter-type-reference",
+    source: "tree-sitter-type-reference",
+    relationship: "type-use",
+    typeRelationship: "type-use",
+    typeReferenceKind: typeReference.referenceKind,
+    relationshipTags: ["type-use", typeReference.referenceKind],
+    evidenceSources: ["tree-sitter-type-reference", "type-use", typeReference.referenceKind],
+    confidence: "medium",
+    range: typeReference.range,
+    containingChunkIdSuffix: typeReference.containingChunkIdSuffix,
+    referenceText: typeReference.referenceText,
+    targetFile: target.file,
+    targetSymbolId: target.id,
+    targetSymbolName: target.name,
+    targetSymbolKind: target.kind,
+    roles: ["ReadAccess", "Type"],
   };
 }
 

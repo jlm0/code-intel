@@ -1,11 +1,14 @@
 import type {
   AstEvalCase,
+  CliMcpEvalCase,
+  CliMcpEvalStep,
   EvalCase,
   EvalExpectation,
   EvalFailureClass,
   EvalGateMetadata,
   GraphCheck,
   GraphEdgeKind,
+  McpEvalCase,
 } from "./eval-pack.js";
 
 export interface EvalCaseResult {
@@ -106,5 +109,70 @@ export interface GraphEvalCaseResult {
     issue?: string;
   };
   expected?: unknown;
+  failureClass?: EvalFailureClass;
+}
+
+export interface McpEvalStepResult {
+  id: string;
+  tool: string;
+  status: "pass" | "fail";
+  issues: string[];
+  actual: {
+    isError: boolean;
+    hasStructuredContent: boolean;
+    contentMatchesStructuredContent: boolean;
+    hasOutputSchema: boolean;
+    resultCount?: number;
+    files: string[];
+    symbols: string[];
+    ids: string[];
+    guidanceNextTools: string[];
+  };
+}
+
+export interface McpEvalCaseResult {
+  id: string;
+  name: string;
+  gate: EvalGateMetadata;
+  status: "pass" | "fail";
+  latencyMs: number;
+  requiredTools: McpEvalCase["requiredTools"];
+  steps: McpEvalStepResult[];
+  actual: {
+    tools: string[];
+    missingTools: string[];
+    missingOutputSchemas: string[];
+  };
+  failureClass?: EvalFailureClass;
+}
+
+export interface CliMcpEvalStepResult {
+  id: string;
+  cliArgs: CliMcpEvalStep["cliArgs"];
+  mcpTool: CliMcpEvalStep["mcpTool"];
+  status: "pass" | "fail";
+  issues: string[];
+  actual: {
+    cliExitCode: number;
+    mcpIsError: boolean;
+    parity: boolean;
+    resultCount?: number;
+    files: string[];
+    symbols: string[];
+    ids: string[];
+  };
+}
+
+export interface CliMcpEvalCaseResult {
+  id: string;
+  name: string;
+  gate: EvalGateMetadata;
+  status: "pass" | "fail";
+  latencyMs: number;
+  steps: CliMcpEvalStepResult[];
+  actual: {
+    stepCount: number;
+    failedSteps: string[];
+  };
   failureClass?: EvalFailureClass;
 }

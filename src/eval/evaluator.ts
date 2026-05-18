@@ -19,11 +19,15 @@ import {
 import { runAstEvalCase } from "./ast-case.js";
 import { buildEvalDiagnostics, type EvalDiagnosticsReport } from "./diagnostics.js";
 import { runGraphEvalCase } from "./graph-case.js";
+import { runMcpEvalCase } from "./mcp-case.js";
+import { runCliMcpEvalCase } from "./cli-mcp-parity-case.js";
 import { runEvalCase } from "./query-case.js";
 import type {
   AstEvalCaseResult,
+  CliMcpEvalCaseResult,
   EvalCaseResult,
   GraphEvalCaseResult,
+  McpEvalCaseResult,
 } from "./results.js";
 import { summarizeEvalResults, type EvalReportSummary } from "./report-summary.js";
 
@@ -70,6 +74,8 @@ export interface EvalReport {
   cases: EvalCaseResult[];
   astCases: AstEvalCaseResult[];
   graphCases: GraphEvalCaseResult[];
+  mcpCases: McpEvalCaseResult[];
+  cliMcpCases: CliMcpEvalCaseResult[];
   diagnostics?: EvalDiagnosticsReport;
 }
 
@@ -104,57 +110,80 @@ export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalRepor
       embeddingProvider,
     });
     const engine = createQueryEngine({ indexPath });
+    const cases: EvalCaseResult[] = [];
+    const astCases: AstEvalCaseResult[] = [];
+    const graphCases: GraphEvalCaseResult[] = [];
     try {
-      const cases: EvalCaseResult[] = [];
       for (const testCase of loadedPack.cases) {
         cases.push(await runEvalCase(testCase, engine));
       }
-      const astCases: AstEvalCaseResult[] = [];
       for (const testCase of loadedPack.astCases) {
         astCases.push(await runAstEvalCase(testCase, corpus));
       }
-      const graphCases: GraphEvalCaseResult[] = [];
       for (const testCase of loadedPack.graphCases) {
         graphCases.push(await runGraphEvalCase(testCase, engine.getRepository()));
       }
-      const summary = summarizeEvalResults([...cases, ...astCases, ...graphCases]);
-      const diagnostics = options.diagnostics
-        ? await buildEvalDiagnostics({
-            corpus,
-            cases,
-            astCases,
-            indexPath,
-          })
-        : undefined;
-
-      return {
-        schemaVersion,
-        status: summary.blockingStatus,
-        blockingStatus: summary.blockingStatus,
-        qualityStatus: summary.qualityStatus,
-        suite: {
-          id: loadedPack.pack.id,
-          name: loadedPack.pack.name,
-          version: loadedPack.pack.version,
-          kind: loadedPack.pack.kind,
-          description: loadedPack.pack.description,
-          license: loadedPack.pack.license,
-        },
-        corpus,
-        embedding: manifest.embedding,
-        index: {
-          stats: manifest.stats,
-          repos: manifest.repos,
-        },
-        summary,
-        cases,
-        astCases,
-        graphCases,
-        diagnostics,
-      };
     } finally {
       await engine.close();
     }
+
+    const mcpCases: McpEvalCaseResult[] = [];
+    for (const testCase of loadedPack.mcpCases) {
+      mcpCases.push(await runMcpEvalCase(testCase, {
+        indexPath,
+        workspacePath: corpus.path,
+        embeddingProvider: manifest.embedding.provider,
+        embeddingModel: manifest.embedding.model,
+      }));
+    }
+
+    const cliMcpCases: CliMcpEvalCaseResult[] = [];
+    for (const testCase of loadedPack.cliMcpCases) {
+      cliMcpCases.push(await runCliMcpEvalCase(testCase, {
+        indexPath,
+        workspacePath: corpus.path,
+        embeddingProvider: manifest.embedding.provider,
+        embeddingModel: manifest.embedding.model,
+      }));
+    }
+
+    const summary = summarizeEvalResults([...cases, ...astCases, ...graphCases, ...mcpCases, ...cliMcpCases]);
+    const diagnostics = options.diagnostics
+      ? await buildEvalDiagnostics({
+          corpus,
+          cases,
+          astCases,
+          indexPath,
+        })
+      : undefined;
+
+    return {
+      schemaVersion,
+      status: summary.blockingStatus,
+      blockingStatus: summary.blockingStatus,
+      qualityStatus: summary.qualityStatus,
+      suite: {
+        id: loadedPack.pack.id,
+        name: loadedPack.pack.name,
+        version: loadedPack.pack.version,
+        kind: loadedPack.pack.kind,
+        description: loadedPack.pack.description,
+        license: loadedPack.pack.license,
+      },
+      corpus,
+      embedding: manifest.embedding,
+      index: {
+        stats: manifest.stats,
+        repos: manifest.repos,
+      },
+      summary,
+      cases,
+      astCases,
+      graphCases,
+      mcpCases,
+      cliMcpCases,
+      diagnostics,
+    };
   } finally {
     await rm(indexPath, { recursive: true, force: true });
   }

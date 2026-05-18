@@ -201,6 +201,22 @@ export const McpToolPayloadSchema = z.object({
   result: z.unknown(),
 });
 
+export function mcpToolOutputSchema(resultSchema: z.ZodTypeAny) {
+  return {
+    schemaVersion: z.literal(schemaVersion),
+    tool: z.string().min(1),
+    guidance: z
+      .object({
+        purpose: z.string().min(1),
+        evidenceFields: z.array(z.string()).default([]),
+        nextTools: z.array(z.string()).default([]),
+        examples: z.array(z.string()).default([]),
+      })
+      .optional(),
+    result: resultSchema,
+  };
+}
+
 export type CodeNode = z.infer<typeof CodeNodeSchema>;
 export type CodeEdge = z.infer<typeof CodeEdgeSchema>;
 export type CodeChunk = z.infer<typeof ChunkSchema>;

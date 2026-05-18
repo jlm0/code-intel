@@ -27,6 +27,7 @@ import {
   extractMemberAccessFact,
   extractTestCaseFact,
 } from "./reference-facts.js";
+import { extractTypeReferenceFact } from "./type-reference-facts.js";
 import type {
   ChunkSourceFileInput,
   SourceCallbackFact,
@@ -37,6 +38,7 @@ import type {
   SourceFileAstFacts,
   SourceImportFact,
   SourceMemberAccessFact,
+  SourceTypeReferenceFact,
   SourceTestCaseFact,
 } from "./types.js";
 
@@ -54,6 +56,7 @@ export type {
   SourceOwnershipFact,
   SourceRange,
   SourceTestCaseFact,
+  SourceTypeReferenceFact,
 } from "./types.js";
 
 export function chunkSourceFile(input: ChunkSourceFileInput): SourceChunk[] {
@@ -71,6 +74,7 @@ export function extractSourceFileFacts(input: ChunkSourceFileInput): SourceFileA
   const exports: SourceExportFact[] = [];
   const calls: SourceCallFact[] = [];
   const memberAccesses: SourceMemberAccessFact[] = [];
+  const typeReferences: SourceTypeReferenceFact[] = [];
   const testCases: SourceTestCaseFact[] = [];
   const callbacks: SourceCallbackFact[] = [];
 
@@ -136,10 +140,15 @@ export function extractSourceFileFacts(input: ChunkSourceFileInput): SourceFileA
         memberAccesses.push(memberAccess);
       }
     }
+
+    const typeReference = extractTypeReferenceFact(input, node, ancestors);
+    if (typeReference) {
+      typeReferences.push(typeReference);
+    }
   });
 
   const chunks = buildChunks({ source: input, declarations, testCases, calls });
-  assignContainment({ declarations, testCases, callbacks, calls, memberAccesses, chunks });
+  assignContainment({ declarations, testCases, callbacks, calls, memberAccesses, typeReferences, chunks });
 
   return {
     relativePath: input.relativePath,
@@ -150,6 +159,7 @@ export function extractSourceFileFacts(input: ChunkSourceFileInput): SourceFileA
     declarations: sortFacts(declarations),
     calls: sortFacts(calls),
     memberAccesses: sortFacts(memberAccesses),
+    typeReferences: sortFacts(typeReferences),
     ownerships: sortFacts(buildOwnerships({ source: input, declarations, testCases })),
     testCases: sortFacts(testCases),
     callbacks: sortFacts(callbacks),
@@ -183,6 +193,7 @@ function fallbackFacts(input: ChunkSourceFileInput): SourceFileAstFacts {
     declarations: [],
     calls: [],
     memberAccesses: [],
+    typeReferences: [],
     ownerships: [],
     testCases: [],
     callbacks: [],

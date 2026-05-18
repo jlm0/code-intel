@@ -1,0 +1,195 @@
+[
+  {
+    "id": "adv.mcp.agent-readiness-workflow",
+    "name": "MCP agent workflow exposes structured outputs, diagnostics, relationship browsing, and bounded context",
+    "gate": {
+      "id": "adv.required.mcp-agent-readiness",
+      "status": "required",
+      "capability": "mcp-agent-readiness",
+      "layer": "mcp",
+      "description": "A real SDK stdio client can chain code-intel MCP tools with structured payloads, evidence, diagnostics, and bounded context."
+    },
+    "requiredTools": [
+      "workspace_overview",
+      "health",
+      "semantic_search",
+      "find_symbol",
+      "get_references",
+      "get_callers",
+      "get_callees",
+      "get_relationships",
+      "trace_path",
+      "diagnose_file",
+      "diagnose_symbol",
+      "get_context"
+    ],
+    "steps": [
+      {
+        "id": "overview",
+        "tool": "workspace_overview",
+        "arguments": {},
+        "expect": {
+          "resultFields": ["indexed"]
+        }
+      },
+      {
+        "id": "health",
+        "tool": "health",
+        "arguments": {},
+        "expect": {
+          "resultFields": ["status", "checks"]
+        }
+      },
+      {
+        "id": "semantic",
+        "tool": "semantic_search",
+        "arguments": {
+          "query": "tagged template html renderer",
+          "limit": 5
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "rankingReasons": true,
+          "allowExcerpts": false
+        }
+      },
+      {
+        "id": "symbol",
+        "tool": "find_symbol",
+        "arguments": {
+          "name": "html",
+          "limit": 5
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "symbols": ["html"]
+        }
+      },
+      {
+        "id": "references",
+        "tool": "get_references",
+        "arguments": {
+          "symbol": "html",
+          "limit": 10
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "relationshipEvidence": true,
+          "allowExcerpts": false
+        }
+      },
+      {
+        "id": "relationships",
+        "tool": "get_relationships",
+        "arguments": {
+          "seed": "html",
+          "direction": "incoming",
+          "allowedEdgeKinds": ["CALLS", "REFERENCES"],
+          "limit": 10
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "relationshipEvidence": true,
+          "allowExcerpts": false
+        }
+      },
+      {
+        "id": "callers",
+        "tool": "get_callers",
+        "arguments": {
+          "symbol": "html",
+          "limit": 10
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "relationshipEvidence": true
+        }
+      },
+      {
+        "id": "callees",
+        "tool": "get_callees",
+        "arguments": {
+          "symbol": "runTagged",
+          "limit": 10
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "relationshipEvidence": true
+        }
+      },
+      {
+        "id": "run_tagged",
+        "tool": "find_symbol",
+        "arguments": {
+          "name": "runTagged",
+          "limit": 1
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "symbols": ["runTagged"]
+        }
+      },
+      {
+        "id": "trace",
+        "tool": "trace_path",
+        "arguments": {
+          "fromId": "{{steps.run_tagged.result.results.0.id}}",
+          "toId": "{{steps.symbol.result.results.0.id}}",
+          "limit": 10,
+          "maxDepth": 4,
+          "allowedEdgeKinds": ["CALLS", "REFERENCES"],
+          "direction": "outgoing"
+        },
+        "expect": {
+          "ids": ["{{steps.symbol.result.results.0.id}}"],
+          "pathEdges": true
+        }
+      },
+      {
+        "id": "diagnose_file",
+        "tool": "diagnose_file",
+        "arguments": {
+          "path": "packages/dispatch/src/tagged-templates.ts"
+        },
+        "expect": {
+          "resultFields": ["matched", "file"]
+        }
+      },
+      {
+        "id": "diagnose_symbol",
+        "tool": "diagnose_symbol",
+        "arguments": {
+          "name": "html"
+        },
+        "expect": {
+          "resultFields": ["matched", "symbols"]
+        }
+      },
+      {
+        "id": "invalid_input",
+        "tool": "find_symbol",
+        "arguments": {
+          "name": "",
+          "limit": 5
+        },
+        "expect": {
+          "error": true
+        }
+      },
+      {
+        "id": "context",
+        "tool": "get_context",
+        "arguments": {
+          "nodeId": "{{steps.semantic.result.results.0.id}}",
+          "limit": 3
+        },
+        "expect": {
+          "files": ["packages/dispatch/src/tagged-templates.ts"],
+          "excerpt": true,
+          "maxExcerptBytes": 16000
+        }
+      }
+    ],
+    "failureClassHint": "mcp"
+  }
+]

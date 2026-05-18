@@ -19,6 +19,7 @@ import type {
   SourceMemberAccessFact,
   SourceOwnershipFact,
   SourceTestCaseFact,
+  SourceTypeReferenceFact,
 } from "../treesitter/chunker.js";
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import { fingerprintKey } from "./update-planner.js";
@@ -52,6 +53,7 @@ export interface FileFact {
   declarations: SourceDeclarationFact[];
   calls: SourceCallFact[];
   memberAccesses: SourceMemberAccessFact[];
+  typeReferences: SourceTypeReferenceFact[];
   ownerships: SourceOwnershipFact[];
   testCases: SourceTestCaseFact[];
   callbacks: SourceCallbackFact[];
@@ -166,6 +168,25 @@ const SourceMemberAccessFactSchema = SourceFactBaseSchema.extend({
   containingDeclarationName: z.string().optional(),
 });
 
+const SourceTypeReferenceFactSchema = SourceFactBaseSchema.extend({
+  name: z.string().min(1),
+  referenceText: z.string().min(1),
+  referenceKind: z.enum([
+    "annotation",
+    "conditional-type",
+    "generic-constraint",
+    "generic-default",
+    "heritage",
+    "indexed-access",
+    "keyof",
+    "mapped-type",
+    "type-argument",
+    "type-use",
+    "typeof",
+  ]),
+  containingDeclarationName: z.string().optional(),
+});
+
 const SourceOwnershipFactSchema = z.object({
   idSuffix: z.string().min(1),
   ownerName: z.string().min(1),
@@ -197,6 +218,7 @@ const FileFactSchema = z.object({
   declarations: z.array(SourceDeclarationFactSchema).default([]),
   calls: z.array(SourceCallFactSchema).default([]),
   memberAccesses: z.array(SourceMemberAccessFactSchema).default([]),
+  typeReferences: z.array(SourceTypeReferenceFactSchema).default([]),
   ownerships: z.array(SourceOwnershipFactSchema).default([]),
   testCases: z.array(SourceTestCaseFactSchema).default([]),
   callbacks: z.array(SourceCallbackFactSchema).default([]),

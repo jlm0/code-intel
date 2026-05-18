@@ -1,0 +1,79 @@
+[
+  {
+    "id": "typeprecision.ast.generic-constraint-defaults",
+    "name": "Generic constraints, defaults, and instantiations emit type-reference facts",
+    "file": "packages/syntax/src/type-precision.ts",
+    "gate": {
+      "id": "typeprecision.required.ast.generic-type-references",
+      "status": "required",
+      "capability": "generic-type-reference-extraction",
+      "layer": "AST",
+      "description": "TypeScript generic constraints, defaults, mapped types, conditional types, indexed access, and constructor type arguments must emit explicit type-reference facts."
+    },
+    "expected": {
+      "declarations": [
+        { "qualifiedName": "EntityEnvelope", "kind": "TypeAlias", "exported": true },
+        { "qualifiedName": "PrecisionMap", "kind": "TypeAlias", "exported": true },
+        { "qualifiedName": "TypeStore", "kind": "Class", "exported": true },
+        { "qualifiedName": "defaultTypeStore", "kind": "Variable", "exported": true }
+      ],
+      "typeReferences": [
+        { "name": "EntityBase", "referenceKind": "generic-constraint", "containingDeclarationName": "EntityEnvelope" },
+        { "name": "InlineTypePayload", "referenceKind": "generic-default", "containingDeclarationName": "EntityEnvelope" },
+        { "name": "EntityEnvelope", "referenceKind": "conditional-type", "containingDeclarationName": "ExtractEntity" },
+        { "name": "InlineTypePayload", "referenceKind": "type-argument", "containingDeclarationName": "PayloadEnvelope" },
+        { "name": "EntityBase", "referenceKind": "generic-constraint", "containingDeclarationName": "PrecisionMap" },
+        { "name": "T", "referenceKind": "mapped-type", "containingDeclarationName": "PrecisionMap" },
+        { "name": "InlineTypePayload", "referenceKind": "type-argument", "containingDeclarationName": "defaultTypeStore" },
+        { "name": "RecursiveEnvelope", "referenceKind": "annotation", "containingDeclarationName": "RecursiveEnvelope" }
+      ]
+    }
+  },
+  {
+    "id": "typeprecision.ast.type-only-reexport",
+    "name": "Type-only re-exports preserve type export kind for precision graphing",
+    "file": "packages/syntax/src/type-precision-reexport.ts",
+    "gate": {
+      "id": "typeprecision.required.ast.type-only-reexport",
+      "status": "required",
+      "capability": "type-only-reexport-precision",
+      "layer": "AST"
+    },
+    "expected": {
+      "exports": [
+        { "exportedName": "ExportedEntityEnvelope", "exportKind": "type", "moduleSpecifier": "./type-precision" },
+        { "exportedName": "PayloadEnvelope", "exportKind": "type", "moduleSpecifier": "./type-precision" },
+        { "exportedName": "PrecisionMap", "exportKind": "type", "moduleSpecifier": "./type-precision" },
+        { "exportedName": "summarizeEnvelope", "exportKind": "re-export", "moduleSpecifier": "./type-precision" }
+      ]
+    }
+  },
+  {
+    "id": "typeprecision.ast.merged-declarations",
+    "name": "Merged interface and namespace declarations preserve namespace member ownership",
+    "file": "packages/syntax/src/merged-declarations.ts",
+    "gate": {
+      "id": "typeprecision.required.ast.merged-declarations",
+      "status": "required",
+      "capability": "merged-declaration-member-ownership",
+      "layer": "AST"
+    },
+    "expected": {
+      "declarations": [
+        { "qualifiedName": "MergeThing", "kind": "Interface", "exported": true },
+        { "qualifiedName": "MergeThing", "kind": "Namespace", "exported": true },
+        { "qualifiedName": "MergeThing.Key", "kind": "TypeAlias", "exported": true },
+        { "qualifiedName": "MergeThing.keyOf", "kind": "Function", "exported": true },
+        { "qualifiedName": "useMerged", "kind": "Function", "exported": true }
+      ],
+      "ownerships": [
+        { "ownerName": "MergeThing", "childName": "MergeThing.Key" },
+        { "ownerName": "MergeThing", "childName": "MergeThing.keyOf" }
+      ],
+      "typeReferences": [
+        { "name": "MergeThing", "referenceKind": "keyof", "containingDeclarationName": "MergeThing.Key" },
+        { "name": "Key", "referenceText": "MergeThing.Key", "referenceKind": "annotation", "containingDeclarationName": "useMerged" }
+      ]
+    }
+  }
+]

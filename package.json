@@ -1,9 +1,25 @@
 {
   "name": "code-intel",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Local-first JS/TS code intelligence graph CLI and MCP server.",
+  "description": "Local-first JavaScript and TypeScript code intelligence for CLI workflows and MCP agents.",
+  "keywords": [
+    "code-intelligence",
+    "typescript",
+    "javascript",
+    "mcp",
+    "cli",
+    "tree-sitter",
+    "scip"
+  ],
+  "homepage": "https://github.com/jlm0/code-intel#readme",
+  "bugs": {
+    "url": "https://github.com/jlm0/code-intel/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jlm0/code-intel.git"
+  },
   "bin": {
     "code-intel": "./dist/cli/main.js"
   },
@@ -14,12 +30,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist coverage",
+    "prepack": "npm run build",
     "test": "npm run build && vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:cli": "npm run build && vitest run tests/cli",
     "test:mcp": "npm run build && vitest run tests/mcp",
-    "test:pty": "npm run build && vitest run tests/pty",
     "test:e2e": "npm run build && vitest run tests/e2e",
     "eval": "node dist/cli/main.js eval"
   },
@@ -42,7 +58,6 @@
   "devDependencies": {
     "@types/node": "25.7.0",
     "execa": "9.6.1",
-    "node-pty": "1.1.0",
     "vitest": "4.1.6"
   }
 }

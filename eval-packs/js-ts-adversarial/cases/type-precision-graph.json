@@ -1,0 +1,162 @@
+[
+  {
+    "id": "typeprecision.graph.type-alias-imported-dependency",
+    "name": "PayloadEnvelope references its imported type argument with AST type-reference evidence",
+    "gate": {
+      "id": "typeprecision.required.graph.type-alias-dependency",
+      "status": "required",
+      "capability": "type-alias-dependency-edges",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/type-precision.ts", "symbol": "PayloadEnvelope" },
+      "to": { "file": "packages/syntax/src/inline-type.ts", "symbol": "InlineTypePayload" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "allOf": ["type-use", "tree-sitter-type-reference"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "typeprecision.graph.generic-constraint",
+    "name": "TypeStore records its generic constraint dependency",
+    "gate": {
+      "id": "typeprecision.required.graph.generic-precision",
+      "status": "required",
+      "capability": "generic-constraint-default-edges",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/type-precision.ts", "symbol": "TypeStore" },
+      "to": { "file": "packages/syntax/src/type-precision.ts", "symbol": "EntityBase" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "allOf": ["type-use", "tree-sitter-type-reference"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "typeprecision.graph.generic-default",
+    "name": "TypeStore records its generic default dependency",
+    "gate": {
+      "id": "typeprecision.required.graph.generic-precision",
+      "status": "required",
+      "capability": "generic-constraint-default-edges",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/type-precision.ts", "symbol": "TypeStore" },
+      "to": { "file": "packages/syntax/src/inline-type.ts", "symbol": "InlineTypePayload" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "allOf": ["type-use", "tree-sitter-type-reference"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "typeprecision.graph.generic-instantiation",
+    "name": "Constructor generic instantiation references the type argument from the variable owner",
+    "gate": {
+      "id": "typeprecision.required.graph.generic-instantiation",
+      "status": "required",
+      "capability": "generic-instantiation-type-argument-edge",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/type-precision.ts", "symbol": "defaultTypeStore" },
+      "to": { "file": "packages/syntax/src/inline-type.ts", "symbol": "InlineTypePayload" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "allOf": ["type-use", "tree-sitter-type-reference"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "typeprecision.graph.type-only-reexport-edge",
+    "name": "Type-only re-export resolves to the originating type alias without runtime call evidence",
+    "gate": {
+      "id": "typeprecision.required.graph.type-only-reexport",
+      "status": "required",
+      "capability": "type-only-reexport-graph-edge",
+      "layer": "fusion"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/type-precision-reexport.ts", "kind": "File" },
+      "to": { "file": "packages/syntax/src/type-precision.ts", "symbol": "EntityEnvelope" },
+      "allowedKinds": ["EXPORTS"],
+      "requireEvidence": { "allOf": ["module-resolution", "tree-sitter-export"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "typeprecision.graph.enum-member-error-reference",
+    "name": "Severity.Error references the enum member, not only the enum container",
+    "gate": {
+      "id": "typeprecision.required.graph.enum-member-precision",
+      "status": "required",
+      "capability": "enum-member-reference-precision",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/type-precision.ts", "symbol": "errorSeverity" },
+      "to": { "file": "packages/syntax/src/namespace-enum.ts", "symbol": "Error" },
+      "allowedKinds": ["REFERENCES"],
+      "requireEvidence": { "allOf": ["tree-sitter-member-access"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "typeprecision.graph.enum-member-no-cross-talk",
+    "name": "Severity.Info-only owner does not reference Severity.Error",
+    "gate": {
+      "id": "typeprecision.required.graph.enum-member-false-positive",
+      "status": "required",
+      "capability": "enum-member-reference-false-positive-guard",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "no-edge",
+      "from": { "file": "packages/syntax/src/type-precision.ts", "symbol": "infoSeverity" },
+      "to": { "file": "packages/syntax/src/namespace-enum.ts", "symbol": "Error" },
+      "allowedKinds": ["REFERENCES"]
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "typeprecision.graph.merged-namespace-member-call",
+    "name": "Merged namespace member call resolves to the namespace-owned function",
+    "gate": {
+      "id": "typeprecision.required.graph.merged-namespace-member",
+      "status": "required",
+      "capability": "merged-namespace-member-resolution",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/syntax/src/merged-declarations.ts", "symbol": "useMerged" },
+      "to": { "file": "packages/syntax/src/merged-declarations.ts", "symbol": "keyOf" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "allOf": ["tree-sitter-member-call"] }
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "typeprecision.graph.recursive-envelope-no-self-loop",
+    "name": "Recursive type alias does not create a REFERENCES self-loop",
+    "gate": {
+      "id": "typeprecision.required.graph.recursive-self-guard",
+      "status": "required",
+      "capability": "recursive-type-false-positive-guard",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "no-edge",
+      "from": { "file": "packages/syntax/src/type-precision.ts", "symbol": "RecursiveEnvelope" },
+      "to": { "file": "packages/syntax/src/type-precision.ts", "symbol": "RecursiveEnvelope" },
+      "allowedKinds": ["REFERENCES"]
+    },
+    "failureClassHint": "graph-edge"
+  }
+]

@@ -54,6 +54,8 @@ const EvalPackSchema = z.object({
   caseFiles: z.array(z.string().min(1)).min(1),
   astCaseFiles: z.array(z.string().min(1)).default([]),
   graphCaseFiles: z.array(z.string().min(1)).default([]),
+  mcpCaseFiles: z.array(z.string().min(1)).default([]),
+  cliMcpCaseFiles: z.array(z.string().min(1)).default([]),
 });
 
 const EvalGateMetadataSchema = z.object({
@@ -95,6 +97,8 @@ const EvalCaseSchema = z.object({
     "graph-ranking",
     "graph-evidence",
     "test-linking",
+    "mcp",
+    "cli-mcp-parity",
   ]).optional(),
 });
 
@@ -198,10 +202,71 @@ const AstEvalCaseSchema = z.object({
     declarations: z.array(AstFactExpectationSchema).default([]),
     calls: z.array(AstFactExpectationSchema).default([]),
     memberAccesses: z.array(AstFactExpectationSchema).default([]),
+    typeReferences: z.array(AstFactExpectationSchema).default([]),
     ownerships: z.array(AstFactExpectationSchema).default([]),
     testCases: z.array(AstFactExpectationSchema).default([]),
     callbacks: z.array(AstFactExpectationSchema).default([]),
   }),
+});
+
+const McpStepExpectationSchema = z.object({
+  resultFields: z.array(z.string().min(1)).default([]),
+  files: z.array(z.string().min(1)).default([]),
+  notFiles: z.array(z.string().min(1)).default([]),
+  symbols: z.array(z.string().min(1)).default([]),
+  ids: z.array(z.string().min(1)).default([]),
+  rankingReasons: z.boolean().default(false),
+  relationshipEvidence: z.boolean().default(false),
+  pathEdges: z.boolean().default(false),
+  excerpt: z.boolean().default(false),
+  allowExcerpts: z.boolean().optional(),
+  maxExcerptBytes: z.number().int().min(1).optional(),
+  maxResultCount: z.number().int().min(1).optional(),
+  error: z.boolean().default(false),
+});
+const defaultMcpStepExpectation = {
+  resultFields: [],
+  files: [],
+  notFiles: [],
+  symbols: [],
+  ids: [],
+  rankingReasons: false,
+  relationshipEvidence: false,
+  pathEdges: false,
+  excerpt: false,
+  error: false,
+};
+
+const McpStepSchema = z.object({
+  id: z.string().min(1),
+  tool: z.string().min(1),
+  arguments: z.record(z.string(), z.unknown()).default({}),
+  expect: McpStepExpectationSchema.default(defaultMcpStepExpectation),
+});
+
+const McpEvalCaseSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  gate: EvalGateMetadataSchema.default(defaultEvalGate),
+  requiredTools: z.array(z.string().min(1)).default([]),
+  steps: z.array(McpStepSchema).min(1),
+  failureClassHint: z.enum(["mcp", "query", "graph", "ranking"]).optional(),
+});
+
+const CliMcpStepSchema = z.object({
+  id: z.string().min(1),
+  cliArgs: z.array(z.string().min(1)).min(1),
+  mcpTool: z.string().min(1),
+  mcpArguments: z.record(z.string(), z.unknown()).default({}),
+  expect: McpStepExpectationSchema.default(defaultMcpStepExpectation),
+});
+
+const CliMcpEvalCaseSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  gate: EvalGateMetadataSchema.default(defaultEvalGate),
+  steps: z.array(CliMcpStepSchema).min(1),
+  failureClassHint: z.enum(["cli-mcp-parity", "mcp", "query", "graph", "ranking"]).optional(),
 });
 
 export type EvalCorpus = z.infer<typeof EvalCorpusSchema>;
@@ -210,9 +275,14 @@ export type EvalGateMetadata = z.infer<typeof EvalGateMetadataSchema>;
 export type EvalGateStatus = EvalGateMetadata["status"];
 export type EvalCase = z.infer<typeof EvalCaseSchema>;
 export type EvalExpectation = z.infer<typeof EvalExpectationSchema>;
-export type EvalFailureClass = NonNullable<EvalCase["failureClassHint"]> | "unknown";
+export type EvalFailureClass = NonNullable<EvalCase["failureClassHint"]> | "mcp" | "unknown";
 export type AstEvalCase = z.infer<typeof AstEvalCaseSchema>;
 export type GraphEvalCase = z.infer<typeof GraphEvalCaseSchema>;
+export type McpEvalCase = z.infer<typeof McpEvalCaseSchema>;
+export type McpEvalStep = z.infer<typeof McpStepSchema>;
+export type McpStepExpectation = z.infer<typeof McpStepExpectationSchema>;
+export type CliMcpEvalCase = z.infer<typeof CliMcpEvalCaseSchema>;
+export type CliMcpEvalStep = z.infer<typeof CliMcpStepSchema>;
 export type GraphCheck = z.infer<typeof GraphCheckSchema>;
 export type GraphNodeSelector = z.infer<typeof GraphNodeSelectorSchema>;
 export type GraphEvidenceRequirement = z.infer<typeof GraphEvidenceRequirementSchema>;
@@ -243,6 +313,8 @@ export interface LoadedEvalPack {
   cases: EvalCase[];
   astCases: AstEvalCase[];
   graphCases: GraphEvalCase[];
+  mcpCases: McpEvalCase[];
+  cliMcpCases: CliMcpEvalCase[];
 }
 
 export interface PrepareEvalCorpusInput {
@@ -271,6 +343,16 @@ export async function loadEvalPack(input: ResolveEvalPackInput): Promise<LoadedE
       z.array(GraphEvalCaseSchema).parse(JSON.parse(await readFile(resolve(packRoot, caseFile), "utf8"))),
     ),
   );
+  const mcpCaseGroups = await Promise.all(
+    pack.mcpCaseFiles.map(async (caseFile) =>
+      z.array(McpEvalCaseSchema).parse(JSON.parse(await readFile(resolve(packRoot, caseFile), "utf8"))),
+    ),
+  );
+  const cliMcpCaseGroups = await Promise.all(
+    pack.cliMcpCaseFiles.map(async (caseFile) =>
+      z.array(CliMcpEvalCaseSchema).parse(JSON.parse(await readFile(resolve(packRoot, caseFile), "utf8"))),
+    ),
+  );
   return {
     pack,
     packPath,
@@ -278,6 +360,8 @@ export async function loadEvalPack(input: ResolveEvalPackInput): Promise<LoadedE
     cases: caseGroups.flat(),
     astCases: astCaseGroups.flat(),
     graphCases: graphCaseGroups.flat(),
+    mcpCases: mcpCaseGroups.flat(),
+    cliMcpCases: cliMcpCaseGroups.flat(),
   };
 }
 

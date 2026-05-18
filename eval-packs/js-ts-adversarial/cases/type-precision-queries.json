@@ -1,0 +1,61 @@
+[
+  {
+    "id": "typeprecision.query.enum-member-error-precise",
+    "name": "References to Severity.Error exclude Severity.Info-only owners",
+    "mode": "references",
+    "query": "Severity.Error",
+    "limit": 20,
+    "gate": {
+      "id": "typeprecision.required.query.enum-member-precision",
+      "status": "required",
+      "capability": "enum-member-reference-query-precision",
+      "layer": "query",
+      "description": "Qualified enum-member reference queries must seed the exact member before broad enum/name metadata matches so Info-only owners do not appear for Severity.Error."
+    },
+    "expected": [
+      { "file": "packages/syntax/src/type-precision.ts", "symbol": "errorSeverity", "maxRank": 5 },
+      { "file": "packages/syntax/src/namespace-consumer.ts", "symbol": "highlightErrors", "maxRank": 10 }
+    ],
+    "notExpected": [
+      { "file": "packages/syntax/src/type-precision.ts", "symbol": "infoSeverity", "maxRank": 20 },
+      { "file": "packages/syntax/src/type-precision-consumer.ts", "symbol": "onlyInfoSeverity", "maxRank": 20 }
+    ],
+    "failureClassHint": "query"
+  },
+  {
+    "id": "typeprecision.query.type-only-consumers",
+    "name": "References to PayloadEnvelope include type-only imports, re-exports, and consumer annotations",
+    "mode": "references",
+    "query": "PayloadEnvelope",
+    "limit": 30,
+    "gate": {
+      "id": "typeprecision.required.query.type-only-consumers",
+      "status": "required",
+      "capability": "type-only-reference-query-coverage",
+      "layer": "query"
+    },
+    "expected": [
+      { "file": "packages/syntax/src/type-precision.ts", "symbol": "summarizeEnvelope", "maxRank": 10 },
+      { "file": "packages/syntax/src/type-precision-consumer.ts", "symbol": "consumeEnvelope", "maxRank": 15 },
+      { "file": "packages/syntax/src/type-precision-reexport.ts", "maxRank": 20 }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "typeprecision.query.merged-namespace-member",
+    "name": "Merged namespace members are findable by qualified name",
+    "mode": "find-symbol",
+    "query": "MergeThing.keyOf",
+    "limit": 10,
+    "gate": {
+      "id": "typeprecision.required.query.merged-namespace-member",
+      "status": "required",
+      "capability": "merged-namespace-member-query",
+      "layer": "query"
+    },
+    "expected": [
+      { "file": "packages/syntax/src/merged-declarations.ts", "symbol": "keyOf", "maxRank": 3 }
+    ],
+    "failureClassHint": "query"
+  }
+]

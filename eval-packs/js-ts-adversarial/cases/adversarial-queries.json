@@ -62,7 +62,7 @@
     "expected": [
       {
         "file": "packages/syntax/src/namespace-enum.ts",
-        "symbol": "Severity",
+        "symbol": "Error",
         "maxRank": 5
       }
     ],

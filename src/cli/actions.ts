@@ -75,6 +75,16 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
+    relationships: async (options, seed) => {
+      const context = createRuntimeContext(options);
+      return withQueryEngine(context, (engine) =>
+        engine.getRelationships(seed, {
+          limit: options.limit ?? 20,
+          allowedEdgeKinds: options.edgeKind,
+          direction: options.direction,
+        }),
+      );
+    },
     callers: async (options, symbol) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>

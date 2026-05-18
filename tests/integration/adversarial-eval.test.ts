@@ -55,6 +55,16 @@ function findPackageNode(nodes: CodeNode[], name: string): CodeNode | undefined 
   return nodes.find((node) => node.kind === "Package" && node.name === name);
 }
 
+function findQualifiedNode(nodes: CodeNode[], file: string, qualifiedName: string): CodeNode | undefined {
+  return nodes.find((node) =>
+    node.file === file &&
+    node.metadata.qualifiedName === qualifiedName &&
+    node.kind !== "Chunk" &&
+    node.kind !== "Import" &&
+    node.kind !== "Export",
+  );
+}
+
 function edgesBetween(
   edges: CodeEdge[],
   fromId: string | undefined,
@@ -187,6 +197,60 @@ describe("adversarial eval — direct AST fact pins", () => {
     );
     expect(dynamicTemplate).toBeDefined();
   });
+
+  it("type precision fixtures emit explicit type-reference facts for generic and mapped type positions", async () => {
+    const facts = await readFacts("packages/syntax/src/type-precision.ts");
+    const typeReferences = (facts as { typeReferences?: Array<Record<string, unknown>> }).typeReferences ?? [];
+    expect(typeReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "EntityBase",
+          referenceKind: "generic-constraint",
+          containingDeclarationName: "EntityEnvelope",
+        }),
+        expect.objectContaining({
+          name: "InlineTypePayload",
+          referenceKind: "generic-default",
+          containingDeclarationName: "EntityEnvelope",
+        }),
+        expect.objectContaining({
+          name: "InlineTypePayload",
+          referenceKind: "type-argument",
+          containingDeclarationName: "PayloadEnvelope",
+        }),
+        expect.objectContaining({
+          name: "InlineTypePayload",
+          referenceKind: "type-argument",
+          containingDeclarationName: "defaultTypeStore",
+        }),
+        expect.objectContaining({
+          name: "T",
+          referenceKind: "mapped-type",
+          containingDeclarationName: "PrecisionMap",
+        }),
+      ]),
+    );
+  });
+
+  it("merged declaration fixture preserves namespace type references", async () => {
+    const facts = await readFacts("packages/syntax/src/merged-declarations.ts");
+    const typeReferences = (facts as { typeReferences?: Array<Record<string, unknown>> }).typeReferences ?? [];
+    expect(typeReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "MergeThing",
+          referenceKind: "keyof",
+          containingDeclarationName: "MergeThing.Key",
+        }),
+        expect.objectContaining({
+          name: "Key",
+          referenceText: "MergeThing.Key",
+          referenceKind: "annotation",
+          containingDeclarationName: "useMerged",
+        }),
+      ]),
+    );
+  });
 });
 
 describe("adversarial eval — graph edge and evidence pins", () => {
@@ -304,6 +368,68 @@ describe("adversarial eval — graph edge and evidence pins", () => {
     const matches = edgesBetween(edges, fromNode?.id, toNode?.id, "REFERENCES");
     expect(matches.length).toBeGreaterThan(0);
     expect(matches.flatMap(evidenceSourcesOf)).toContain("type-use");
+  });
+
+  it("type-alias dependency edge carries tree-sitter type-reference evidence", () => {
+    const fromNode = findNode(nodes, "packages/syntax/src/type-precision.ts", "PayloadEnvelope");
+    const toNode = findNode(nodes, "packages/syntax/src/inline-type.ts", "InlineTypePayload");
+    const matches = edgesBetween(edges, fromNode?.id, toNode?.id, "REFERENCES");
+    expect(matches.length).toBeGreaterThan(0);
+    const evidence = matches.flatMap(evidenceSourcesOf);
+    expect(evidence).toContain("type-use");
+    expect(evidence).toContain("tree-sitter-type-reference");
+  });
+
+  it("generic constraint and default edges carry tree-sitter type-reference evidence", () => {
+    const storeNode = findNode(nodes, "packages/syntax/src/type-precision.ts", "TypeStore");
+    const entityBase = findNode(nodes, "packages/syntax/src/type-precision.ts", "EntityBase");
+    const inlinePayload = findNode(nodes, "packages/syntax/src/inline-type.ts", "InlineTypePayload");
+    const constraintEvidence = edgesBetween(edges, storeNode?.id, entityBase?.id, "REFERENCES")
+      .flatMap(evidenceSourcesOf);
+    const defaultEvidence = edgesBetween(edges, storeNode?.id, inlinePayload?.id, "REFERENCES")
+      .flatMap(evidenceSourcesOf);
+    expect(constraintEvidence).toContain("tree-sitter-type-reference");
+    expect(defaultEvidence).toContain("tree-sitter-type-reference");
+  });
+
+  it("generic instantiation edge points from the owning variable to the type argument", () => {
+    const storeValue = findNode(nodes, "packages/syntax/src/type-precision.ts", "defaultTypeStore");
+    const inlinePayload = findNode(nodes, "packages/syntax/src/inline-type.ts", "InlineTypePayload");
+    const evidence = edgesBetween(edges, storeValue?.id, inlinePayload?.id, "REFERENCES")
+      .flatMap(evidenceSourcesOf);
+    expect(evidence).toContain("tree-sitter-type-reference");
+  });
+
+  it("enum member references distinguish Error from Info", () => {
+    const errorSource = findNode(nodes, "packages/syntax/src/type-precision.ts", "errorSeverity");
+    const infoSource = findNode(nodes, "packages/syntax/src/type-precision.ts", "infoSeverity");
+    const errorMember = findQualifiedNode(nodes, "packages/syntax/src/namespace-enum.ts", "Severity.Error");
+    const infoMember = findQualifiedNode(nodes, "packages/syntax/src/namespace-enum.ts", "Severity.Info");
+    expect(edgesBetween(edges, errorSource?.id, errorMember?.id, "REFERENCES")).not.toHaveLength(0);
+    expect(edgesBetween(edges, infoSource?.id, infoMember?.id, "REFERENCES")).not.toHaveLength(0);
+    expect(edgesBetween(edges, infoSource?.id, errorMember?.id, "REFERENCES")).toHaveLength(0);
+  });
+
+  it("merged namespace member call resolves to the namespace-owned function", () => {
+    const fromNode = findNode(nodes, "packages/syntax/src/merged-declarations.ts", "useMerged");
+    const target = findQualifiedNode(nodes, "packages/syntax/src/merged-declarations.ts", "MergeThing.keyOf");
+    const matches = edgesBetween(edges, fromNode?.id, target?.id, "CALLS");
+    expect(matches.length).toBeGreaterThan(0);
+    expect(matches.flatMap(evidenceSourcesOf)).toContain("tree-sitter-member-call");
+  });
+
+  it("recursive type precision fixture does not create a REFERENCES self-loop", () => {
+    const recursive = findNode(nodes, "packages/syntax/src/type-precision.ts", "RecursiveEnvelope");
+    expect(edgesBetween(edges, recursive?.id, recursive?.id, "REFERENCES")).toHaveLength(0);
+  });
+
+  it("qualified enum-member reference queries exclude Info-only owners", async () => {
+    const result = await engine.getReferences("Severity.Error", { limit: 20 });
+    const resultKeys = result.results.map((item) => `${item.file ?? ""}#${item.symbol?.name ?? ""}`);
+    expect(resultKeys).toContain("packages/syntax/src/type-precision.ts#errorSeverity");
+    expect(resultKeys).toContain("packages/syntax/src/namespace-consumer.ts#highlightErrors");
+    expect(resultKeys).not.toContain("packages/syntax/src/type-precision.ts#infoSeverity");
+    expect(resultKeys).not.toContain("packages/syntax/src/type-precision-consumer.ts#onlyInfoSeverity");
   });
 });
 

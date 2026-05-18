@@ -110,6 +110,30 @@ export interface SourceMemberAccessFact {
   containingChunkIdSuffix?: string;
 }
 
+export interface SourceTypeReferenceFact {
+  idSuffix: string;
+  name: string;
+  referenceText: string;
+  referenceKind:
+    | "annotation"
+    | "conditional-type"
+    | "generic-constraint"
+    | "generic-default"
+    | "heritage"
+    | "indexed-access"
+    | "keyof"
+    | "mapped-type"
+    | "type-argument"
+    | "type-use"
+    | "typeof";
+  range: SourceRange;
+  sourceText: string;
+  contentHash: string;
+  ownerFile: string;
+  containingDeclarationName?: string;
+  containingChunkIdSuffix?: string;
+}
+
 export interface SourceOwnershipFact {
   idSuffix: string;
   ownerName: string;
@@ -153,6 +177,7 @@ export interface SourceFileAstFacts {
   declarations: SourceDeclarationFact[];
   calls: SourceCallFact[];
   memberAccesses: SourceMemberAccessFact[];
+  typeReferences: SourceTypeReferenceFact[];
   ownerships: SourceOwnershipFact[];
   testCases: SourceTestCaseFact[];
   callbacks: SourceCallbackFact[];
