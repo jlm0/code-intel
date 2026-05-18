@@ -1,0 +1,129 @@
+[
+  {
+    "id": "dub.query.create-link-symbol",
+    "name": "Find createLink implementation",
+    "mode": "find-symbol",
+    "query": "createLink",
+    "limit": 20,
+    "gate": {
+      "id": "dub.target.symbol-create-link",
+      "status": "target",
+      "capability": "route/API-to-service",
+      "layer": "SCIP",
+      "description": "The link creation implementation should be findable without being hidden behind API route aliases."
+    },
+    "expected": [
+      {
+        "file": "apps/web/lib/api/links/create-link.ts",
+        "symbol": "createLink",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "dub.query.create-link-references",
+    "name": "References to createLink include API route",
+    "mode": "references",
+    "query": "createLink",
+    "limit": 30,
+    "gate": {
+      "id": "dub.target.references-route-service",
+      "status": "target",
+      "capability": "route/API-to-service",
+      "layer": "fusion",
+      "description": "References should connect the route import/call site back to createLink."
+    },
+    "expected": [
+      {
+        "file": "apps/web/app/api/links/route.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "dub.query.link-builder-ui-to-api",
+    "name": "Semantic query for link builder UI to create-link API flow",
+    "mode": "semantic",
+    "query": "link builder create short link api prisma tinybird webhook",
+    "limit": 20,
+    "gate": {
+      "id": "dub.scoreboard.ui-to-server-ranking",
+      "status": "scoreboard",
+      "capability": "ranking-quality",
+      "layer": "ranking",
+      "description": "Scoreboard quality check for surfacing UI hook plus route and service code for link creation."
+    },
+    "expected": [
+      {
+        "file": "apps/web/ui/links/link-builder/use-link-builder-submit.tsx",
+        "symbol": "useLinkBuilderSubmit",
+        "maxRank": 10
+      },
+      {
+        "file": "apps/web/app/api/links/route.ts",
+        "symbol": "POST",
+        "maxRank": 15
+      },
+      {
+        "file": "apps/web/lib/api/links/create-link.ts",
+        "symbol": "createLink",
+        "maxRank": 15
+      }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "dub.query.record-click-references",
+    "name": "References to recordClick include redirect middleware",
+    "mode": "references",
+    "query": "recordClick",
+    "limit": 30,
+    "gate": {
+      "id": "dub.target.references-redirect-analytics",
+      "status": "target",
+      "capability": "redirect-to-analytics/cache/database",
+      "layer": "fusion",
+      "description": "Redirect middleware should be connected to the click analytics implementation."
+    },
+    "expected": [
+      {
+        "file": "apps/web/lib/middleware/link.ts",
+        "symbol": "LinkMiddleware",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "dub.query.webhook-payment-flow",
+    "name": "Semantic query for payment webhook handling",
+    "mode": "semantic",
+    "query": "dub webhook lead sale payment signature handler",
+    "limit": 20,
+    "gate": {
+      "id": "dub.scoreboard.webhook-payment-ranking",
+      "status": "scoreboard",
+      "capability": "webhook/payment",
+      "layer": "ranking",
+      "description": "Scoreboard quality check for surfacing webhook route and payment event handlers."
+    },
+    "expected": [
+      {
+        "file": "apps/web/app/api/dub/webhook/route.ts",
+        "symbol": "POST",
+        "maxRank": 10
+      },
+      {
+        "file": "apps/web/app/api/dub/webhook/lead-created.ts",
+        "maxRank": 15
+      },
+      {
+        "file": "apps/web/app/api/dub/webhook/sale-created.ts",
+        "maxRank": 15
+      }
+    ],
+    "failureClassHint": "ranking"
+  }
+]

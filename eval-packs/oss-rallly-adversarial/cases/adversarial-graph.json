@@ -1,0 +1,117 @@
+[
+  {
+    "id": "rallly.adv.graph.createpoll-uses-prisma-via-member-chain",
+    "name": "createPoll has a CALLS edge to prisma with full member-chain evidence",
+    "gate": {
+      "id": "rallly.adv.target.graph.member-chain-precision",
+      "status": "target",
+      "capability": "member-chain-precision",
+      "layer": "graph",
+      "description": "The existing rallly.relationship.create-poll-member-database-call gate currently fails. This stricter version asserts the CALLS edge AND the full evidence set required: scip-typescript canonicalises createPoll, tree-sitter-member-call records the prisma.poll.create chain, module-resolution proves the cross-package boundary."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "packages/api-core/src/polls/mutations.ts", "symbol": "createPoll" },
+      "to": { "file": "packages/database/src/client.ts", "symbol": "prisma" },
+      "allowedKinds": ["CALLS"],
+      "requireEvidence": { "allOf": ["scip-typescript", "tree-sitter-member-call", "module-resolution"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "rallly.adv.graph.middleware-package-boundary",
+    "name": "Middleware-to-route edge preserves package-boundary evidence",
+    "gate": {
+      "id": "rallly.adv.target.graph.middleware-boundary",
+      "status": "target",
+      "capability": "package-boundary-evidence",
+      "layer": "graph",
+      "description": "spaceApiKeyAuth is in apps/api/src/middleware; the route file in apps/api/src/routes imports it via a relative path. Even within an app, package-boundary or module-resolution evidence must be attached so the graph can rank middleware traversals."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "apps/api/src/middleware/api-key.ts", "symbol": "spaceApiKeyAuth" },
+      "to": { "file": "apps/api/src/routes/polls.ts" },
+      "allowedKinds": ["REFERENCES", "IMPORTS", "CALLS"],
+      "direction": "either",
+      "requireEvidence": { "anyOf": ["module-resolution", "scip-typescript"] }
+    },
+    "failureClassHint": "graph-evidence"
+  },
+  {
+    "id": "rallly.adv.graph.mock-derived-tests-edge",
+    "name": "vi.mock('./route') in the private API route test creates a TESTS edge with mock evidence",
+    "gate": {
+      "id": "rallly.adv.target.test-linking.mock-rallly",
+      "status": "target",
+      "capability": "mock-derived-test-link",
+      "layer": "test-linking",
+      "description": "On real Rallly, the private API route test mocks the implementation. test-linking should emit a TESTS edge tagged with `mock` evidence — not relying on import-only edges."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "apps/web/src/app/api/private/[...route]/route.test.ts", "kind": "Test" },
+      "to": { "file": "apps/web/src/app/api/private/[...route]/route.ts" },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": { "anyOf": ["mock", "tree-sitter-test"] }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "rallly.adv.graph.no-false-positive-billing-from-mutation",
+    "name": "createPoll mutation must NOT reach billing through any edge",
+    "gate": {
+      "id": "rallly.adv.target.graph.no-billing-from-mutation",
+      "status": "target",
+      "capability": "false-positive-guard",
+      "layer": "graph",
+      "description": "There is no real code path from createPoll to billing in the pinned slice. The graph must not invent one through any combination of MENTIONS, REFERENCES, IMPORTS, or CALLS at depth ≤ 4."
+    },
+    "check": {
+      "type": "no-path",
+      "from": { "file": "packages/api-core/src/polls/mutations.ts", "symbol": "createPoll" },
+      "to": { "file": "packages/billing/src/**" },
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS", "MENTIONS"],
+      "maxDepth": 4
+    },
+    "failureClassHint": "graph-edge"
+  },
+  {
+    "id": "rallly.adv.graph.test-to-mutation-via-mock-chain",
+    "name": "Private route test reaches createPoll mutation through the implementation route",
+    "gate": {
+      "id": "rallly.adv.target.test-linking.mock-chain",
+      "status": "target",
+      "capability": "mock-chain-test-link",
+      "layer": "test-linking",
+      "description": "When the test mocks the route AND the route imports createPoll, test-linking should produce a TESTS edge to createPoll with `test-linking-indirect` evidence plus `mock` evidence on the bridging edge."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "apps/web/src/app/api/private/[...route]/route.test.ts", "kind": "Test" },
+      "to": { "file": "packages/api-core/src/polls/mutations.ts", "symbol": "createPoll" },
+      "allowedKinds": ["TESTS"],
+      "requireEvidence": { "allOf": ["test-linking-indirect", "mock"] }
+    },
+    "failureClassHint": "test-linking"
+  },
+  {
+    "id": "rallly.adv.graph.dynamic-import-resolved-to-admin-page",
+    "name": "next/dynamic import from admin-page-loader resolves to admin-page module",
+    "gate": {
+      "id": "rallly.adv.target.graph.next-dynamic",
+      "status": "target",
+      "capability": "next-dynamic-resolution",
+      "layer": "graph",
+      "description": "`dynamic(() => import('./admin-page'))` is the common Next.js code-splitting pattern. The graph must produce an IMPORTS edge from the loader file to the admin-page module with dynamic-import evidence."
+    },
+    "check": {
+      "type": "edge-exists",
+      "from": { "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page-loader.tsx" },
+      "to": { "file": "apps/web/src/app/[locale]/(optional-space)/poll/[urlId]/admin-page.tsx" },
+      "allowedKinds": ["IMPORTS"],
+      "requireEvidence": { "anyOf": ["module-resolution", "next-app-router", "tree-sitter-import"] }
+    },
+    "failureClassHint": "graph-edge"
+  }
+]

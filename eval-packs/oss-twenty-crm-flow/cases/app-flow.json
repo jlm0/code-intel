@@ -1,0 +1,81 @@
+[
+  {
+    "id": "twenty.query.bar-chart-service-symbol",
+    "name": "Find BarChartDataService implementation",
+    "mode": "find-symbol",
+    "query": "BarChartDataService",
+    "limit": 20,
+    "gate": {
+      "id": "twenty.target.symbol-bar-chart-service",
+      "status": "target",
+      "capability": "resolver/controller-to-service",
+      "layer": "SCIP",
+      "description": "The service class should be findable distinctly from resolver and test references."
+    },
+    "expected": [
+      {
+        "file": "packages/twenty-server/src/modules/dashboard/chart-data/services/bar-chart-data.service.ts",
+        "symbol": "BarChartDataService",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "twenty.query.bar-chart-service-references",
+    "name": "References to BarChartDataService include resolver and module",
+    "mode": "references",
+    "query": "BarChartDataService",
+    "limit": 30,
+    "gate": {
+      "id": "twenty.target.references-module-provider",
+      "status": "target",
+      "capability": "Nest provider/module",
+      "layer": "fusion",
+      "description": "References should include both injection sites and Nest module provider registration."
+    },
+    "expected": [
+      {
+        "file": "packages/twenty-server/src/modules/dashboard/chart-data/resolvers/bar-chart-data.resolver.ts",
+        "maxRank": 20
+      },
+      {
+        "file": "packages/twenty-server/src/modules/dashboard/chart-data/chart-data.module.ts",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "twenty.query-react-record-table-graphql",
+    "name": "Semantic query for record table widget GraphQL flow",
+    "mode": "semantic",
+    "query": "record table widget find many records GraphQL Apollo query",
+    "limit": 20,
+    "gate": {
+      "id": "twenty.scoreboard.react-graphql-ranking",
+      "status": "scoreboard",
+      "capability": "ranking-quality",
+      "layer": "ranking",
+      "description": "Scoreboard quality check for surfacing React widget, hook, and generated GraphQL query code together."
+    },
+    "expected": [
+      {
+        "file": "packages/twenty-front/src/modules/page-layout/widgets/record-table/components/RecordTableWidgetRendererContent.tsx",
+        "symbol": "RecordTableWidgetRendererContent",
+        "maxRank": 10
+      },
+      {
+        "file": "packages/twenty-front/src/modules/object-record/hooks/useFindManyRecords.ts",
+        "symbol": "useFindManyRecords",
+        "maxRank": 15
+      },
+      {
+        "file": "packages/twenty-front/src/modules/object-record/utils/generateFindManyRecordsQuery.ts",
+        "symbol": "generateFindManyRecordsQuery",
+        "maxRank": 15
+      }
+    ],
+    "failureClassHint": "ranking"
+  }
+]
