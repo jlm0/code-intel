@@ -129,7 +129,7 @@ code-intel mcp
 
 Use `--json` for deterministic machine-readable output. Human-readable output is intended for TTY use, while non-TTY and JSON modes stay stable for agent and script consumption.
 
-The full command reference is in [docs/cli-reference.md](docs/cli-reference.md).
+Run `code-intel --help` or `code-intel <command> --help` for command details.
 
 ## Embeddings
 
@@ -177,4 +177,4 @@ git diff --check
 npm pack --dry-run
 ```
 
-Project notes, feature history, verification records, and workflow rules live under [docs/](docs/).
+Internal planning and verification notes are not published with the public repository.
