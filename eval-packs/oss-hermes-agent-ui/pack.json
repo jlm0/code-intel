@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "code-intel.eval-pack.v1",
+  "id": "oss-hermes-agent-ui",
+  "name": "Hermes Agent OSS UI/TUI",
+  "version": "1.0.0",
+  "kind": "external-git",
+  "description": "On-demand AI-agent JS/TS eval pack for React/Ink TUI, gateway client, hooks, protocol types, package boundaries, and tests.",
+  "license": "MIT",
+  "corpus": {
+    "type": "git",
+    "url": "https://github.com/NousResearch/hermes-agent.git",
+    "ref": "3b39096904ae63a9e784b2403ad6ad27160bb2ef",
+    "repoPaths": ["."],
+    "sparsePaths": [
+      "package.json",
+      "ui-tui/package.json",
+      "ui-tui/tsconfig.json",
+      "ui-tui/src/__tests__/gatewayClient.test.ts",
+      "ui-tui/src/__tests__/useComposerState.test.ts",
+      "ui-tui/src/app.tsx",
+      "ui-tui/src/app/gatewayContext.tsx",
+      "ui-tui/src/app/useComposerState.ts",
+      "ui-tui/src/app/useMainApp.ts",
+      "ui-tui/src/components/appLayout.tsx",
+      "ui-tui/src/gatewayClient.ts",
+      "ui-tui/src/gatewayTypes.ts",
+      "ui-tui/src/hooks/useCompletion.ts",
+      "ui-tui/src/hooks/useQueue.ts",
+      "ui-tui/packages/hermes-ink/package.json",
+      "ui-tui/packages/hermes-ink/src/entry-exports.ts",
+      "web/package.json",
+      "web/tsconfig.json",
+      "web/tsconfig.app.json",
+      "web/src/components/ChatSidebar.tsx",
+      "web/src/components/ModelPickerDialog.tsx",
+      "web/src/lib/gatewayClient.ts"
+    ]
+  },
+  "caseFiles": ["cases/app-flow.json"],
+  "astCaseFiles": ["cases/ast-facts.json"],
+  "graphCaseFiles": ["cases/graph-paths.json"]
+}

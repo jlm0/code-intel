@@ -1,0 +1,114 @@
+[
+  {
+    "id": "twenty.ast.bar-chart-resolver",
+    "name": "BarChartDataResolver records GraphQL resolver and service call",
+    "file": "packages/twenty-server/src/modules/dashboard/chart-data/resolvers/bar-chart-data.resolver.ts",
+    "gate": {
+      "id": "twenty.target.ast-graphql-resolver",
+      "status": "target",
+      "capability": "resolver/controller-to-service",
+      "layer": "AST",
+      "description": "Nest GraphQL resolvers should preserve injected service imports, class methods, decorators, and calls."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "src/modules/dashboard/chart-data/services/bar-chart-data.service",
+          "importedName": "BarChartDataService",
+          "localName": "BarChartDataService",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "BarChartDataResolver",
+          "kind": "Class",
+          "exported": true
+        },
+        {
+          "qualifiedName": "BarChartDataResolver.barChartData",
+          "kind": "ClassMethod"
+        }
+      ],
+      "calls": [
+        {
+          "name": "getBarChartData",
+          "memberPath": "this.barChartDataService.getBarChartData",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "twenty.ast.bar-chart-service",
+    "name": "BarChartDataService records query service and metadata cache calls",
+    "file": "packages/twenty-server/src/modules/dashboard/chart-data/services/bar-chart-data.service.ts",
+    "gate": {
+      "id": "twenty.target.ast-service-query-runner",
+      "status": "target",
+      "capability": "service-to-database/repository",
+      "layer": "AST",
+      "description": "Nest services should preserve injected cache/query-runner member calls and transformation methods."
+    },
+    "expected": {
+      "declarations": [
+        {
+          "qualifiedName": "BarChartDataService",
+          "kind": "Class",
+          "exported": true
+        },
+        {
+          "qualifiedName": "BarChartDataService.getBarChartData",
+          "kind": "ClassMethod"
+        }
+      ],
+      "calls": [
+        {
+          "name": "executeGroupByQuery",
+          "memberPath": "this.chartDataQueryService.executeGroupByQuery",
+          "callKind": "member"
+        },
+        {
+          "name": "getOrRecomputeManyOrAllFlatEntityMaps",
+          "memberPath": "this.workspaceManyOrAllFlatEntityMapsCacheService.getOrRecomputeManyOrAllFlatEntityMaps",
+          "callKind": "member"
+        }
+      ]
+    }
+  },
+  {
+    "id": "twenty.ast-record-table-widget",
+    "name": "Record table widget content records React composition and metadata hook",
+    "file": "packages/twenty-front/src/modules/page-layout/widgets/record-table/components/RecordTableWidgetRendererContent.tsx",
+    "gate": {
+      "id": "twenty.target.ast-react-graphql-ui",
+      "status": "target",
+      "capability": "React-to-GraphQL/API",
+      "layer": "AST",
+      "description": "React widget components should preserve imported hooks, component declarations, and JSX component usage."
+    },
+    "expected": {
+      "imports": [
+        {
+          "moduleSpecifier": "@/object-metadata/hooks/useObjectMetadataItemById",
+          "importedName": "useObjectMetadataItemById",
+          "localName": "useObjectMetadataItemById",
+          "importKind": "value"
+        }
+      ],
+      "declarations": [
+        {
+          "qualifiedName": "RecordTableWidgetRendererContent",
+          "kind": "VariableFunction",
+          "exported": true
+        }
+      ],
+      "calls": [
+        {
+          "name": "useObjectMetadataItemById",
+          "callKind": "function"
+        }
+      ]
+    }
+  }
+]

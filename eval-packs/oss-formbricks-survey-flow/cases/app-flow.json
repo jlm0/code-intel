@@ -1,0 +1,82 @@
+[
+  {
+    "id": "formbricks.query-survey-editor-page",
+    "name": "Find SurveyEditorPage implementation",
+    "mode": "find-symbol",
+    "query": "SurveyEditorPage",
+    "limit": 20,
+    "gate": {
+      "id": "formbricks.target.symbol-survey-editor",
+      "status": "target",
+      "capability": "survey-editor",
+      "layer": "SCIP",
+      "description": "The survey editor server component should be findable by symbol."
+    },
+    "expected": [
+      {
+        "file": "apps/web/modules/survey/editor/page.tsx",
+        "symbol": "SurveyEditorPage",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "formbricks.query-process-response-references",
+    "name": "References to processResponseData include package tests",
+    "mode": "references",
+    "query": "processResponseData",
+    "limit": 30,
+    "gate": {
+      "id": "formbricks.target.references-response-tests",
+      "status": "target",
+      "capability": "test-to-implementation",
+      "layer": "fusion",
+      "description": "Package-level test references should resolve back to the response utility."
+    },
+    "expected": [
+      {
+        "file": "packages/surveys/src/lib/response.test.ts",
+        "maxRank": 20
+      },
+      {
+        "file": "packages/surveys/src/lib/response.ts",
+        "symbol": "processResponseData",
+        "maxRank": 20
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "formbricks.query-survey-editor-auth-response-flow",
+    "name": "Semantic query for survey editor auth and response count flow",
+    "mode": "semantic",
+    "query": "survey editor workspace auth survey response count permissions",
+    "limit": 20,
+    "gate": {
+      "id": "formbricks.scoreboard.editor-auth-ranking",
+      "status": "scoreboard",
+      "capability": "ranking-quality",
+      "layer": "ranking",
+      "description": "Scoreboard quality check for retrieving survey editor plus auth and response-count services."
+    },
+    "expected": [
+      {
+        "file": "apps/web/modules/survey/editor/page.tsx",
+        "symbol": "SurveyEditorPage",
+        "maxRank": 10
+      },
+      {
+        "file": "apps/web/modules/workspaces/lib/utils.ts",
+        "symbol": "getWorkspaceAuth",
+        "maxRank": 15
+      },
+      {
+        "file": "apps/web/modules/survey/lib/response.ts",
+        "symbol": "getResponseCountBySurveyId",
+        "maxRank": 15
+      }
+    ],
+    "failureClassHint": "ranking"
+  }
+]

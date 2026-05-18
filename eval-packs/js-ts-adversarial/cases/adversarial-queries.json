@@ -1,0 +1,321 @@
+[
+  {
+    "id": "adv.query.find-overloaded-symbol-once",
+    "name": "Overloaded function returns one logical symbol, not duplicates",
+    "mode": "find-symbol",
+    "query": "runOverload",
+    "limit": 5,
+    "gate": {
+      "id": "adv.target.query.overload-dedupe",
+      "status": "target",
+      "capability": "overload-symbol-dedupe",
+      "layer": "query",
+      "description": "find-symbol must return a single canonical declaration for an overloaded function. Today the multiple overload signatures may produce multiple symbols."
+    },
+    "expected": [
+      {
+        "file": "packages/syntax/src/overloads.ts",
+        "symbol": "runOverload",
+        "maxRank": 1
+      }
+    ],
+    "notExpected": [
+      { "file": "packages/syntax/src/overloads.ts", "symbol": "runOverload", "maxRank": 2 }
+    ],
+    "failureClassHint": "query"
+  },
+  {
+    "id": "adv.query.find-namespace-member",
+    "name": "Nested namespace member is findable by short name",
+    "mode": "find-symbol",
+    "query": "bySeverity",
+    "limit": 10,
+    "gate": {
+      "id": "adv.target.query.namespace-member",
+      "status": "target",
+      "capability": "ts-namespace-symbol-lookup",
+      "layer": "query",
+      "description": "Members of TS namespaces (FileStatus.Filters.bySeverity) must be addressable by short name through find-symbol."
+    },
+    "expected": [
+      {
+        "file": "packages/syntax/src/namespace-enum.ts",
+        "symbol": "bySeverity",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "query"
+  },
+  {
+    "id": "adv.query.find-enum-member",
+    "name": "Enum members are findable as symbols",
+    "mode": "find-symbol",
+    "query": "Severity.Error",
+    "limit": 10,
+    "gate": {
+      "id": "adv.target.query.enum-member-symbol",
+      "status": "target",
+      "capability": "enum-member-lookup",
+      "layer": "query",
+      "description": "find-symbol of `Severity.Error` should resolve to the enum member (or its parent enum with member metadata)."
+    },
+    "expected": [
+      {
+        "file": "packages/syntax/src/namespace-enum.ts",
+        "symbol": "Severity",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "query"
+  },
+  {
+    "id": "adv.query.callers-via-super",
+    "name": "Callers of BaseService.greet include ChildService.greet via super.call",
+    "mode": "callers",
+    "query": "greet",
+    "limit": 20,
+    "gate": {
+      "id": "adv.target.query.super-callers",
+      "status": "target",
+      "capability": "super-call-discovery",
+      "layer": "graph",
+      "description": "Callers of BaseService.greet must include the overriding subclass's greet via the super.greet call."
+    },
+    "expected": [
+      {
+        "file": "packages/dispatch/src/child-override.ts",
+        "symbol": "greet",
+        "maxRank": 5
+      },
+      {
+        "file": "packages/dispatch/src/base-service.ts",
+        "symbol": "describe",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "adv.query.callees-this-resolved",
+    "name": "Callees of SelfDispatcher.start include this.prefix and this.normalize",
+    "mode": "callees",
+    "query": "start",
+    "limit": 20,
+    "gate": {
+      "id": "adv.target.query.this-callees",
+      "status": "target",
+      "capability": "this-call-discovery",
+      "layer": "graph",
+      "description": "Callees of SelfDispatcher.start must include both private methods invoked via `this.`."
+    },
+    "expected": [
+      {
+        "file": "packages/dispatch/src/self-dispatch.ts",
+        "symbol": "prefix",
+        "maxRank": 10
+      },
+      {
+        "file": "packages/dispatch/src/self-dispatch.ts",
+        "symbol": "normalize",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "adv.query.callers-multiply-via-bind-call-apply",
+    "name": "Callers of `multiply` include bind/call/apply consumers",
+    "mode": "callers",
+    "query": "multiply",
+    "limit": 20,
+    "gate": {
+      "id": "adv.target.query.bind-call-apply-callers",
+      "status": "target",
+      "capability": "bind-call-apply-callers",
+      "layer": "graph",
+      "description": "`multiply` is invoked via .bind, .call, and .apply. All three invokers must appear as callers."
+    },
+    "expected": [
+      { "file": "packages/dispatch/src/bind-call-apply.ts", "symbol": "boundInvoker", "maxRank": 10 },
+      { "file": "packages/dispatch/src/bind-call-apply.ts", "symbol": "applyInvoker", "maxRank": 10 },
+      { "file": "packages/dispatch/src/bind-call-apply.ts", "symbol": "callInvoker", "maxRank": 10 }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "adv.query.references-through-multi-hop-barrel",
+    "name": "References to multiHopFinal include the consumer through a 4-hop barrel",
+    "mode": "references",
+    "query": "multiHopFinal",
+    "limit": 20,
+    "gate": {
+      "id": "adv.target.query.multi-hop-references",
+      "status": "target",
+      "capability": "multi-hop-reference-discovery",
+      "layer": "fusion",
+      "description": "References to the originating function must include the cross-package consumer that imports through a 4-level barrel chain."
+    },
+    "expected": [
+      {
+        "file": "packages/modules/src/multi-hop-consumer.ts",
+        "symbol": "consumeMultiHop",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "adv.query.references-type-only-import",
+    "name": "References to InlineTypePayload include type-only consumers",
+    "mode": "references",
+    "query": "InlineTypePayload",
+    "limit": 30,
+    "gate": {
+      "id": "adv.target.query.type-only-references",
+      "status": "target",
+      "capability": "type-only-references",
+      "layer": "fusion",
+      "description": "Both runtime consumers (inline-type-consumer.ts) and type-only consumers (conditional-types.ts, type-reexport.ts, generics.ts, satisfies.ts) must appear in references, with type-use evidence on the type-only ones."
+    },
+    "expected": [
+      { "file": "packages/syntax/src/inline-type-consumer.ts", "maxRank": 10 },
+      { "file": "packages/syntax/src/conditional-types.ts", "maxRank": 15 },
+      { "file": "packages/syntax/src/type-reexport.ts", "maxRank": 20 },
+      { "file": "packages/dispatch/src/generics.ts", "maxRank": 25 }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "adv.query.references-enum-member-narrow",
+    "name": "References to a specific enum member return only consumers of that member",
+    "mode": "references",
+    "query": "Severity.Error",
+    "limit": 20,
+    "gate": {
+      "id": "adv.target.query.enum-member-references",
+      "status": "scoreboard",
+      "capability": "enum-member-precision",
+      "layer": "graph",
+      "description": "References to Severity.Error should preferentially include namespace-consumer.ts (which uses Severity.Error) and exclude files that only reference Severity.Info."
+    },
+    "expected": [
+      {
+        "file": "packages/syntax/src/namespace-consumer.ts",
+        "symbol": "highlightErrors",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "adv.query.references-ambient-untyped-helper",
+    "name": "References to untypedHelper resolve through the ambient module declaration",
+    "mode": "references",
+    "query": "untypedHelper",
+    "limit": 10,
+    "gate": {
+      "id": "adv.target.query.ambient-references",
+      "status": "target",
+      "capability": "ambient-import-references",
+      "layer": "fusion",
+      "description": "ambient-consumer.ts imports `untypedHelper` from `untyped-helper`, which is declared in ambient.d.ts. References must connect the consumer to the ambient declaration."
+    },
+    "expected": [
+      {
+        "file": "packages/syntax/src/ambient-consumer.ts",
+        "symbol": "callUntyped",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "adv.query.callers-of-tag-function",
+    "name": "Callers of `html` tag function include runTagged via tagged template",
+    "mode": "callers",
+    "query": "html",
+    "limit": 10,
+    "gate": {
+      "id": "adv.target.query.tagged-template-callers",
+      "status": "target",
+      "capability": "tagged-template-callers",
+      "layer": "graph",
+      "description": "`html` is invoked through a tagged template literal. The graph must allow callers(html) to return runTagged."
+    },
+    "expected": [
+      {
+        "file": "packages/dispatch/src/tagged-templates.ts",
+        "symbol": "runTagged",
+        "maxRank": 5
+      }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "adv.query.callers-of-anonymous-default",
+    "name": "Callers of the anonymous default export include the default-reexport consumer chain",
+    "mode": "callers",
+    "query": "default",
+    "limit": 20,
+    "gate": {
+      "id": "adv.target.query.anonymous-default-callers",
+      "status": "scoreboard",
+      "capability": "anonymous-default-callers",
+      "layer": "graph",
+      "description": "Locating callers of an anonymous default export is hard. This is a scoreboard gate to track precision over time."
+    },
+    "expected": [
+      { "file": "packages/modules/src/anonymous-default.ts", "maxRank": 20 }
+    ],
+    "failureClassHint": "graph"
+  },
+  {
+    "id": "adv.query.semantic-side-effect-import",
+    "name": "Semantic search for `register polyfill on load` ranks side-effect-host first",
+    "mode": "semantic",
+    "query": "register a polyfill that loads at module evaluation time",
+    "limit": 10,
+    "gate": {
+      "id": "adv.target.ranking.side-effect",
+      "status": "target",
+      "capability": "side-effect-semantic-ranking",
+      "layer": "ranking",
+      "description": "Side-effect import patterns should be discoverable by their effect, not just by string match. side-effect-host.ts should rank above orphan-mock.test.ts."
+    },
+    "expected": [
+      {
+        "file": "packages/modules/src/side-effect-host.ts",
+        "maxRank": 3
+      }
+    ],
+    "notExpected": [
+      { "file": "packages/testing/src/orphan-mock.test.ts", "maxRank": 5 }
+    ],
+    "failureClassHint": "ranking"
+  },
+  {
+    "id": "adv.query.semantic-mocked-implementation",
+    "name": "Semantic `mocked module replaces real implementation` ranks mocked-target above the mock test",
+    "mode": "semantic",
+    "query": "mocked module replaces real implementation",
+    "limit": 10,
+    "gate": {
+      "id": "adv.target.ranking.implementation-vs-mock-test",
+      "status": "target",
+      "capability": "implementation-intent-vs-test",
+      "layer": "ranking",
+      "description": "Implementation-intent query must rank the real implementation above the test that mocks it."
+    },
+    "expected": [
+      {
+        "file": "packages/testing/src/mocked-target.ts",
+        "symbol": "mockedTarget",
+        "maxRank": 3
+      }
+    ],
+    "notExpected": [
+      { "file": "packages/testing/src/__tests__/mocked.test.ts", "maxRank": 1 }
+    ],
+    "failureClassHint": "ranking"
+  }
+]
