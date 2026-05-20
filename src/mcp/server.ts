@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { createRuntimeContext, type RuntimeOptions } from "../core/context.js";
 import { runHealth } from "../core/health.js";
+import { readPackageVersion } from "../core/package-version.js";
 import { getIndexProgress } from "../core/progress.js";
 import { getStatus } from "../core/status.js";
 import { diagnoseIndexedFile, diagnoseIndexedSymbol } from "../diagnostics/index-diagnostics.js";
@@ -29,7 +30,7 @@ export async function startMcpServer(options: RuntimeOptions): Promise<void> {
   let queryEngineCloseTimer: NodeJS.Timeout | undefined;
   const server = new McpServer({
     name: "code-intel",
-    version: "0.1.0",
+    version: readPackageVersion(),
   });
 
   server.registerTool(

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,9 @@ import { copyFixtureWorkspace, mutateFixtureWorkspace } from "../helpers/increme
 
 const cliPath = new URL("../../dist/cli/main.js", import.meta.url).pathname;
 const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
+const packageJson = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
 
 describe("MCP stdio server", () => {
   it("lists and calls code intelligence tools without stdout pollution", async () => {
@@ -59,6 +63,11 @@ describe("MCP stdio server", () => {
 
     try {
       await client.connect(transport);
+      expect(client.getServerVersion()).toEqual({
+        name: "code-intel",
+        version: packageJson.version,
+      });
+
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([

@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-
 import { Command } from "commander";
 
+import { readPackageVersion } from "../core/package-version.js";
 import { EdgeKindSchema } from "../schema/schemas.js";
 import { createDefaultActions } from "./actions.js";
 import { renderResult } from "./presenter.js";
@@ -60,15 +59,6 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
   registerCommand(program, "mcp", "Start the MCP stdio server.", actions.mcp, runtime, { suppressOutput: true });
 
   return program;
-}
-
-function readPackageVersion(): string {
-  const packageJsonUrl = new URL("../../package.json", import.meta.url);
-  const packageJson = JSON.parse(readFileSync(packageJsonUrl, "utf8")) as { version?: unknown };
-  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
-    throw new Error("Unable to read code-intel package version.");
-  }
-  return packageJson.version;
 }
 
 function registerCommand(
