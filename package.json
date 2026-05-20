@@ -1,6 +1,6 @@
 {
   "name": "code-intel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Local-first JavaScript and TypeScript code intelligence for CLI workflows and MCP agents.",
   "keywords": [
