@@ -26,6 +26,10 @@ export interface ApplyTestLinkingGraphFactsInput {
   addEdge: AddEdge;
 }
 
+interface IndexedTestLinkingGraphFactsInput extends ApplyTestLinkingGraphFactsInput {
+  edgesByFromId: Map<string, CodeEdge[]>;
+}
+
 interface TestCaseEvidence {
   name: string;
   title: string;
@@ -51,7 +55,7 @@ export function applyTestLinkingGraphFacts(input: ApplyTestLinkingGraphFactsInpu
   addHttpRouteTestEdges(input);
   normalizeDirectTestEdges(input);
   addColocatedFallbackEdges(input);
-  addIndirectTestEdges(input);
+  addIndirectTestEdges(withOutgoingEdgeIndex(input));
 }
 
 function addHttpRouteTestEdges(input: ApplyTestLinkingGraphFactsInput): void {
@@ -366,7 +370,7 @@ function hasDirectTestLinkIntoSourceFile(
   return false;
 }
 
-function addIndirectTestEdges(input: ApplyTestLinkingGraphFactsInput): void {
+function addIndirectTestEdges(input: IndexedTestLinkingGraphFactsInput): void {
   const directEdges = [...input.edges.values()].filter((edge) =>
     edge.kind === "TESTS" &&
     stringFromMetadata(edge.metadata, "testLinkKind") !== "indirect" &&
@@ -577,7 +581,7 @@ function addTestCaseMetadata(
 }
 
 function indirectCoverageTargets(
-  input: ApplyTestLinkingGraphFactsInput,
+  input: IndexedTestLinkingGraphFactsInput,
   startId: string,
 ): Array<{ node: CodeNode; path: TraversalStep[] }> {
   const results = new Map<string, { node: CodeNode; path: TraversalStep[] }>();
@@ -645,10 +649,28 @@ function initialIndirectQueue(
   return queue;
 }
 
-function outgoingEdges(input: ApplyTestLinkingGraphFactsInput, nodeId: string): CodeEdge[] {
-  return [...input.edges.values()]
-    .filter((edge) => edge.fromId === nodeId)
-    .sort((left, right) => edgeRank(left) - edgeRank(right) || left.id.localeCompare(right.id));
+function withOutgoingEdgeIndex(input: ApplyTestLinkingGraphFactsInput): IndexedTestLinkingGraphFactsInput {
+  return {
+    ...input,
+    edgesByFromId: indexOutgoingEdges(input.edges),
+  };
+}
+
+function indexOutgoingEdges(edges: Map<string, CodeEdge>): Map<string, CodeEdge[]> {
+  const edgesByFromId = new Map<string, CodeEdge[]>();
+  for (const edge of edges.values()) {
+    const current = edgesByFromId.get(edge.fromId) ?? [];
+    current.push(edge);
+    edgesByFromId.set(edge.fromId, current);
+  }
+  for (const current of edgesByFromId.values()) {
+    current.sort((left, right) => edgeRank(left) - edgeRank(right) || left.id.localeCompare(right.id));
+  }
+  return edgesByFromId;
+}
+
+function outgoingEdges(input: IndexedTestLinkingGraphFactsInput, nodeId: string): CodeEdge[] {
+  return input.edgesByFromId.get(nodeId) ?? [];
 }
 
 function edgeRank(edge: CodeEdge): number {

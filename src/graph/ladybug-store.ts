@@ -96,7 +96,6 @@ export class LadybugGraphStore implements CodeGraphRepository {
       await this.createSchema(input.embeddingDimension);
       const chunksById = new Map(input.chunks.map((chunk) => [chunk.id, chunk]));
       await this.createNodes(input.nodes.map((node) => CodeNodeSchema.parse(node)), chunksById);
-      await this.createNodeProjections(input.nodes.map((node) => CodeNodeSchema.parse(node)));
       await this.createEdges(input.edges.map((edge) => CodeEdgeSchema.parse(edge)));
       await this.createVectorIndex();
     } finally {
@@ -399,17 +398,10 @@ export class LadybugGraphStore implements CodeGraphRepository {
       )
     `);
     await this.query("CREATE REL TABLE IF NOT EXISTS RELATES(FROM CodeNode TO CodeNode, id STRING, kind STRING, metadata STRING)");
-    await this.createTypedTables();
+    await this.createEdgeTables();
   }
 
-  private async createTypedTables(): Promise<void> {
-    await this.query("CREATE NODE TABLE IF NOT EXISTS Workspace(id STRING PRIMARY KEY, name STRING)");
-    await this.query("CREATE NODE TABLE IF NOT EXISTS Repo(id STRING PRIMARY KEY, name STRING)");
-    await this.query("CREATE NODE TABLE IF NOT EXISTS Package(id STRING PRIMARY KEY, name STRING)");
-    await this.query("CREATE NODE TABLE IF NOT EXISTS File(id STRING PRIMARY KEY, path STRING)");
-    await this.query("CREATE NODE TABLE IF NOT EXISTS Symbol(id STRING PRIMARY KEY, name STRING)");
-    await this.query("CREATE NODE TABLE IF NOT EXISTS Test(id STRING PRIMARY KEY, name STRING)");
-    await this.query("CREATE NODE TABLE IF NOT EXISTS Chunk(id STRING PRIMARY KEY, name STRING, file STRING)");
+  private async createEdgeTables(): Promise<void> {
     for (const edgeKind of edgeKinds) {
       await this.query(
         `CREATE REL TABLE IF NOT EXISTS ${edgeKind}(FROM CodeNode TO CodeNode, id STRING, metadata STRING)`,
@@ -427,25 +419,6 @@ export class LadybugGraphStore implements CodeGraphRepository {
           .map((node) => `(:CodeNode ${cypherMap(nodeValues(node, chunksById.get(node.id)))})`)
           .join(", ")}
       `);
-    }
-  }
-
-  private async createNodeProjections(nodes: CodeNode[]): Promise<void> {
-    const projections = new Map<string, Record<string, unknown>[]>();
-    for (const node of nodes) {
-      const projection = typedNodeProjection(node);
-      if (!projection) continue;
-      const rows = projections.get(projection.table) ?? [];
-      rows.push(projection.values);
-      projections.set(projection.table, rows);
-    }
-
-    for (const [table, rows] of projections) {
-      for (const batch of chunkArray(rows, 200)) {
-        await this.query(`
-          CREATE ${batch.map((row) => `(:${table} ${cypherMap(row)})`).join(", ")}
-        `);
-      }
     }
   }
 
@@ -1081,29 +1054,4 @@ function relatedRowRank(
 
 function metadataArrayIncludes(value: unknown, expected: string): boolean {
   return Array.isArray(value) && value.includes(expected);
-}
-
-function typedNodeProjection(node: CodeNode): { table: string; values: Record<string, unknown> } | undefined {
-  switch (node.kind) {
-    case "Workspace":
-      return { table: "Workspace", values: { id: node.id, name: node.name } };
-    case "Repo":
-      return { table: "Repo", values: { id: node.id, name: node.name } };
-    case "Package":
-      return { table: "Package", values: { id: node.id, name: node.name } };
-    case "File":
-      return { table: "File", values: { id: node.id, path: node.file } };
-    case "Symbol":
-    case "Function":
-    case "Class":
-    case "Interface":
-    case "TypeAlias":
-      return { table: "Symbol", values: { id: node.id, name: node.name } };
-    case "Test":
-      return { table: "Test", values: { id: node.id, name: node.name } };
-    case "Chunk":
-      return { table: "Chunk", values: { id: node.id, name: node.name, file: node.file } };
-    default:
-      return undefined;
-  }
 }

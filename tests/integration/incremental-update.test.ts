@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -149,6 +149,79 @@ describe("incremental changed-file reindexing", () => {
       await rm(indexPath, { recursive: true, force: true });
     }
   });
+
+  it("keeps a no-op update incremental when SCIP infers config for a repo without tsconfig.json", async () => {
+    const workspaceRoot = await copyFixtureWorkspace();
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-no-tsconfig-"));
+    const sourceTsconfigPath = join(workspaceRoot, "tsconfig.json");
+    try {
+      await unlink(sourceTsconfigPath);
+      const initialProvider = createCountingProvider();
+      await indexWorkspace({
+        workspaceRoot,
+        repoPaths: [workspaceRoot],
+        indexPath,
+        embeddingProvider: initialProvider,
+      });
+      await expect(access(sourceTsconfigPath)).rejects.toThrow();
+
+      const updateProvider = createCountingProvider();
+      const updateManifest = await updateWorkspace({
+        workspaceRoot,
+        repoPaths: [workspaceRoot],
+        indexPath,
+        embeddingProvider: updateProvider,
+      });
+
+      expect(updateManifest.incremental).toMatchObject({
+        mode: "incremental",
+        files: {
+          added: 0,
+          changed: 0,
+          deleted: 0,
+        },
+        chunks: {
+          embedded: 0,
+        },
+      });
+      expect(updateProvider.embeddedTexts).toHaveLength(0);
+      await expect(access(sourceTsconfigPath)).rejects.toThrow();
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("treats tsconfig.base.json edits as config invalidation", async () => {
+    const workspaceRoot = await copyFixtureWorkspace();
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-tsconfig-base-"));
+    const tsconfigBasePath = join(workspaceRoot, "tsconfig.base.json");
+    try {
+      await writeFile(tsconfigBasePath, JSON.stringify({ compilerOptions: { baseUrl: "." } }));
+      await indexWorkspace({
+        workspaceRoot,
+        repoPaths: [workspaceRoot],
+        indexPath,
+        embeddingProvider: createCountingProvider(),
+      });
+
+      await writeFile(tsconfigBasePath, JSON.stringify({ compilerOptions: { baseUrl: ".", paths: {} } }));
+      const updateManifest = await updateWorkspace({
+        workspaceRoot,
+        repoPaths: [workspaceRoot],
+        indexPath,
+        embeddingProvider: createCountingProvider(),
+      });
+
+      expect(updateManifest.incremental).toMatchObject({
+        mode: "full",
+        reason: "config changed",
+      });
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
 
 async function expectGraphEquivalent(incrementalIndexPath: string, fullIndexPath: string): Promise<void> {

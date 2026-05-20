@@ -16,7 +16,7 @@ export async function embedGraphChunks(
   embeddingCache: Map<string, number[]>,
 ): Promise<{ embedded: number; reused: number }> {
   const chunks = [...chunksById.values()].sort((left, right) => left.id.localeCompare(right.id));
-  const missingChunks: EmbeddableChunkNode[] = [];
+  const missingInputs = new Map<string, { embeddingInputHash: string; input: string; chunks: EmbeddableChunkNode[] }>();
   let reused = 0;
 
   for (const chunk of chunks) {
@@ -28,19 +28,32 @@ export async function embedGraphChunks(
       chunk.fact.embedding = cachedEmbedding;
       reused += 1;
     } else {
-      missingChunks.push(chunk);
+      const existing = missingInputs.get(chunk.embeddingInputHash);
+      if (existing) {
+        existing.chunks.push(chunk);
+      } else {
+        missingInputs.set(chunk.embeddingInputHash, {
+          embeddingInputHash: chunk.embeddingInputHash,
+          input: chunkEmbeddingInput(chunk),
+          chunks: [chunk],
+        });
+      }
     }
   }
 
   let embedded = 0;
-  for (const batch of chunkArray(missingChunks, 16)) {
+  for (const batch of chunkArray([...missingInputs.values()], 16)) {
     const embeddings = await embeddingProvider.embedBatch(
-      batch.map((chunk) => chunkEmbeddingInput(chunk)),
+      batch.map((entry) => entry.input),
     );
-    batch.forEach((chunk, index) => {
-      chunk.embedding = embeddings[index] ?? [];
-      chunk.fact.embedding = chunk.embedding;
-      embedded += 1;
+    batch.forEach((entry, index) => {
+      const embedding = embeddings[index] ?? [];
+      embeddingCache.set(entry.embeddingInputHash, embedding);
+      for (const chunk of entry.chunks) {
+        chunk.embedding = embedding;
+        chunk.fact.embedding = chunk.embedding;
+        embedded += 1;
+      }
     });
   }
 

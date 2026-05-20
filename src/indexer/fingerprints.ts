@@ -96,4 +96,4 @@ export function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-const configFilenames = ["package.json", "tsconfig.json", "jsconfig.json"];
+const configFilenames = ["package.json", "tsconfig.json", "tsconfig.base.json", "jsconfig.json"];

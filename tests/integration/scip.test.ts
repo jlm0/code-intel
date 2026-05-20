@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, cp, mkdtemp, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -63,6 +63,32 @@ describe("SCIP integration", () => {
             roles: expect.arrayContaining(["ReadAccess"]),
           }),
         ]),
+      );
+    } finally {
+      await rm(tempPath, { recursive: true, force: true });
+    }
+  });
+
+  it("infers missing TypeScript config without writing tsconfig.json into the source repo", async () => {
+    const tempPath = await mkdtemp(join(tmpdir(), "code-intel-scip-infer-"));
+    const repoPath = join(tempPath, "workspace");
+    try {
+      await cp(fixturePath, repoPath, { recursive: true });
+      const sourceTsconfigPath = join(repoPath, "tsconfig.json");
+      await unlink(sourceTsconfigPath);
+
+      const outputPath = join(tempPath, "fixture.scip");
+      const run = await runScipTypescript({
+        repoPath,
+        outputPath,
+        inferTsconfig: true,
+      });
+      expect(run.ok).toBe(true);
+      await expect(access(sourceTsconfigPath)).rejects.toThrow();
+
+      const facts = await ingestScipIndex(outputPath);
+      expect(facts.definitions.map((definition) => definition.name)).toContain(
+        "calculateGivingTotal",
       );
     } finally {
       await rm(tempPath, { recursive: true, force: true });

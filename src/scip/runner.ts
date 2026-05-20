@@ -1,4 +1,5 @@
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -30,6 +31,7 @@ export async function runScipTypescript(
   input: RunScipTypescriptInput,
 ): Promise<RunScipTypescriptResult> {
   await mkdir(dirname(input.outputPath), { recursive: true });
+  const preparedProject = await prepareScipProject(input);
   const args = [
     "index",
     "--cwd",
@@ -37,10 +39,8 @@ export async function runScipTypescript(
     "--output",
     input.outputPath,
     "--no-progress-bar",
+    ...preparedProject.projects,
   ];
-  if (input.inferTsconfig) {
-    args.push("--infer-tsconfig");
-  }
 
   return new Promise((resolvePromise, rejectPromise) => {
     const startedAt = performance.now();
@@ -73,7 +73,7 @@ export async function runScipTypescript(
     child.on("error", (error) => {
       clearTimeout(timeout);
       if (hardKillTimeout) clearTimeout(hardKillTimeout);
-      rejectPromise(error);
+      cleanupPreparedScipProject(preparedProject).finally(() => rejectPromise(error));
     });
     child.on("close", async (exitCode) => {
       clearTimeout(timeout);
@@ -82,6 +82,7 @@ export async function runScipTypescript(
       const durationMs = Math.round(performance.now() - startedAt);
       if (scipSize > maxScipBytes) {
         await rm(input.outputPath, { force: true });
+        await cleanupPreparedScipProject(preparedProject);
         resolvePromise({
           ok: false,
           outputPath: input.outputPath,
@@ -98,6 +99,7 @@ export async function runScipTypescript(
         });
         return;
       }
+      await cleanupPreparedScipProject(preparedProject);
       resolvePromise({
         ok: exitCode === 0 && !timedOut,
         outputPath: input.outputPath,
@@ -111,6 +113,134 @@ export async function runScipTypescript(
     });
   });
 }
+
+interface PreparedScipProject {
+  projects: string[];
+  cleanup(): Promise<void>;
+}
+
+async function prepareScipProject(input: RunScipTypescriptInput): Promise<PreparedScipProject> {
+  if (!input.inferTsconfig || await pathExists(join(input.repoPath, "tsconfig.json"))) {
+    return { projects: [], cleanup: async () => {} };
+  }
+
+  const scratchRoot = await mkdtemp(join(dirname(input.outputPath), "scip-infer-"));
+  const configPath = join(scratchRoot, "tsconfig.json");
+  const inferredConfig = await inferredTsconfig(input.repoPath);
+  await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
+  return {
+    projects: [configPath],
+    cleanup: () => rm(scratchRoot, { recursive: true, force: true }),
+  };
+}
+
+async function inferredTsconfig(repoPath: string): Promise<Record<string, unknown>> {
+  const allowJs = await shouldAllowJs(repoPath);
+  const include = [
+    ...absoluteGlobs(repoPath, ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"]),
+    ...(allowJs ? absoluteGlobs(repoPath, ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]) : []),
+  ];
+  const compilerOptions: Record<string, unknown> = allowJs ? { allowJs: true, checkJs: false } : {};
+  return {
+    compilerOptions,
+    include,
+    exclude: absoluteGlobs(repoPath, [
+      "node_modules/**",
+      "bower_components/**",
+      "jspm_packages/**",
+      ".git/**",
+      "dist/**",
+      "out/**",
+      "build/**",
+      "coverage/**",
+    ]),
+  };
+}
+
+async function shouldAllowJs(repoPath: string): Promise<boolean> {
+  const state = {
+    hasTypeScriptFile: false,
+    hasJavaScriptFile: false,
+    visitedFiles: 0,
+  };
+  await visitSourceTree(repoPath, state);
+  return !state.hasTypeScriptFile && state.hasJavaScriptFile;
+}
+
+async function visitSourceTree(
+  directory: string,
+  state: { hasTypeScriptFile: boolean; hasJavaScriptFile: boolean; visitedFiles: number },
+): Promise<void> {
+  if (state.hasTypeScriptFile || state.visitedFiles > 1_000) {
+    return;
+  }
+  let entries: Dirent[];
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (state.hasTypeScriptFile || state.visitedFiles > 1_000) {
+      return;
+    }
+    const childPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!ignoredInferenceDirectories.has(entry.name)) {
+        await visitSourceTree(childPath, state);
+      }
+      continue;
+    }
+    if (!entry.isFile()) {
+      continue;
+    }
+    state.visitedFiles += 1;
+    const lowerName = entry.name.toLowerCase();
+    if (typescriptInferenceExtensions.some((extension) => lowerName.endsWith(extension))) {
+      state.hasTypeScriptFile = true;
+      return;
+    }
+    if (javascriptInferenceExtensions.some((extension) => lowerName.endsWith(extension))) {
+      state.hasJavaScriptFile = true;
+    }
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function cleanupPreparedScipProject(project: PreparedScipProject): Promise<void> {
+  try {
+    await project.cleanup();
+  } catch {
+    // Scratch cleanup should not hide the SCIP result.
+  }
+}
+
+function absoluteGlobs(root: string, patterns: string[]): string[] {
+  const normalizedRoot = root.replaceAll("\\", "/").replace(/\/$/, "");
+  return patterns.map((pattern) => `${normalizedRoot}/${pattern}`);
+}
+
+const ignoredInferenceDirectories = new Set([
+  ".git",
+  "node_modules",
+  "bower_components",
+  "jspm_packages",
+  "dist",
+  "out",
+  "build",
+  "coverage",
+]);
+
+const typescriptInferenceExtensions = [".ts", ".tsx", ".mts", ".cts"];
+const javascriptInferenceExtensions = [".js", ".jsx", ".mjs", ".cjs"];
 
 async function outputFileSize(path: string): Promise<number> {
   try {
