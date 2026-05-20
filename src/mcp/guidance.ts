@@ -15,15 +15,21 @@ const commonEvidence = [
 const toolGuidance: Record<string, McpGuidance> = {
   workspace_overview: {
     purpose: "Confirm the active index and repositories before querying.",
-    evidenceFields: ["manifest", "repos", "indexPath"],
-    nextTools: ["health", "semantic_search", "find_symbol"],
-    examples: ["Call workspace_overview first when a repo may not be indexed."],
+    evidenceFields: ["manifest", "repos", "indexPath", "progress.status", "progress.phase"],
+    nextTools: ["health", "index_progress", "semantic_search", "find_symbol"],
+    examples: ["Call workspace_overview first when a repo may not be indexed or indexing may still be running."],
   },
   health: {
     purpose: "Check whether environment, provider, manifest, graph, and MCP surfaces are usable.",
     evidenceFields: ["checks[].status", "checks[].details"],
     nextTools: ["workspace_overview", "semantic_search"],
     examples: ["Run health after index/update or when results look stale."],
+  },
+  index_progress: {
+    purpose: "Check whether index or update work is running, succeeded, failed, or stale.",
+    evidenceFields: ["progress.status", "progress.phase", "progress.counters", "progress.staleReason"],
+    nextTools: ["workspace_overview", "health"],
+    examples: ["Poll index_progress while a CLI index command is running before trusting new results."],
   },
   search_text: {
     purpose: "Find exact strings with bounded ripgrep output.",

@@ -28,6 +28,7 @@ describe("createCliProgram", () => {
       "health",
       "index",
       "mcp",
+      "progress",
       "references",
       "relationships",
       "search",
@@ -67,6 +68,31 @@ describe("createCliProgram", () => {
 
     expect(status).toHaveBeenCalledWith(
       expect.objectContaining({ json: true }),
+      expect.objectContaining({
+        stderr: expect.any(Object),
+        stdout: expect.any(Object),
+      }),
+    );
+  });
+
+  it("delegates progress command actions to injected handlers", async () => {
+    const progress = vi.fn(async () => ({ schemaVersion: "code-intel.v1", indexPath: "/tmp/index" }));
+    const program = createCliProgram({
+      actions: { progress },
+      stdout: { write: vi.fn() },
+      stderr: { write: vi.fn() },
+    });
+
+    await program.parseAsync(["node", "code-intel", "progress", "--json"], {
+      from: "node",
+    });
+
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({ json: true }),
+      expect.objectContaining({
+        stderr: expect.any(Object),
+        stdout: expect.any(Object),
+      }),
     );
   });
 
@@ -101,6 +127,10 @@ describe("createCliProgram", () => {
         edgeKind: ["CALLS", "REFERENCES"],
         json: true,
         limit: 7,
+      }),
+      expect.objectContaining({
+        stderr: expect.any(Object),
+        stdout: expect.any(Object),
       }),
       "calculateGivingTotal",
     );

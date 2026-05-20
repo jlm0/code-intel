@@ -82,6 +82,12 @@ Incrementally refresh after edits:
 code-intel update --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
 ```
 
+Check current or latest index progress:
+
+```bash
+code-intel progress --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
+```
+
 If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated folders, dependency folders, build output, logs, and local runtime folders are ignored by default.
 
 ## MCP Usage
@@ -120,6 +126,7 @@ Core commands:
 ```text
 code-intel index
 code-intel update
+code-intel progress
 code-intel status
 code-intel health
 code-intel search

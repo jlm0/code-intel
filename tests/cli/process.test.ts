@@ -27,6 +27,7 @@ describe("code-intel process behavior", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: code-intel");
+    expect(result.stdout).toContain("progress");
     expect(result.stdout).toContain("relationships");
     expect(result.stderr).toBe("");
   });
@@ -90,6 +91,8 @@ describe("code-intel process behavior", () => {
       ]);
       const indexPayload = JSON.parse(indexResult.stdout);
       expect(indexPayload.stats.chunks).toBeGreaterThan(0);
+      expect(indexResult.stderr).toContain("index running starting");
+      expect(indexResult.stderr).toContain("index succeeded succeeded");
 
       const statusResult = await execa("node", [
         cliPath,
@@ -100,7 +103,31 @@ describe("code-intel process behavior", () => {
         indexPath,
         "--json",
       ]);
-      expect(JSON.parse(statusResult.stdout).indexed).toBe(true);
+      const statusPayload = JSON.parse(statusResult.stdout);
+      expect(statusPayload.indexed).toBe(true);
+      expect(statusPayload.progress).toMatchObject({
+        operation: "index",
+        status: "succeeded",
+        phase: "succeeded",
+      });
+
+      const progressResult = await execa("node", [
+        cliPath,
+        "progress",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+      expect(JSON.parse(progressResult.stdout)).toMatchObject({
+        indexPath,
+        progress: {
+          operation: "index",
+          status: "succeeded",
+          phase: "succeeded",
+        },
+      });
 
       const symbolResult = await execa("node", [
         cliPath,
@@ -220,6 +247,32 @@ describe("code-intel process behavior", () => {
       await rm(indexPath, { recursive: true, force: true });
     }
   });
+
+  it("suppresses index progress output when quiet is enabled", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-cli-quiet-progress-"));
+    const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
+    try {
+      const result = await execa("node", [
+        cliPath,
+        "index",
+        "--workspace",
+        fixturePath,
+        "--repo",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--embedding-provider",
+        "hash",
+        "--json",
+        "--quiet",
+      ]);
+
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("updates a changed fixture repo incrementally through the built CLI", async () => {
     const workspaceRoot = await copyFixtureWorkspace();
@@ -356,7 +409,7 @@ describe("code-intel process behavior", () => {
     } finally {
       await rm(indexPath, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("rejects invalid arguments with stderr and nonzero exit", async () => {
     const result = await execa("node", [cliPath, "find-symbol"], {

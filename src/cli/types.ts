@@ -26,11 +26,12 @@ export interface CliOptions extends RuntimeOptions {
   includeMcpLatency?: boolean;
 }
 
-export type CliAction = (options: CliOptions, ...args: string[]) => Promise<unknown>;
+export type CliAction = (options: CliOptions, runtime: CliRuntime, ...args: string[]) => Promise<unknown>;
 
 export interface CliActions {
   index: CliAction;
   update: CliAction;
+  progress: CliAction;
   status: CliAction;
   health: CliAction;
   search: CliAction;

@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { writeJsonAtomically } from "../core/index-artifacts.js";
+import type { IndexProgressReporter, IndexProgressUpdate } from "../core/progress.js";
 import { buildIndexDiagnostics, writeIndexDiagnostics } from "../diagnostics/index-diagnostics.js";
 import { createEdgeId, createStableId } from "../core/ids.js";
 import { LadybugGraphStore } from "../graph/ladybug-store.js";
@@ -52,6 +53,7 @@ export interface IndexWorkspaceInput {
   embeddingModel?: string;
   includeIgnored?: boolean;
   workspaceManifestPath?: string;
+  progress?: IndexProgressReporter;
 }
 
 interface MutableGraph {
@@ -74,6 +76,14 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
   const releaseWriteLock = await acquireIndexWriteLock(input.indexPath);
   try {
     return await buildIndexWorkspace(input, { mode: "index" });
+  } catch (error) {
+    await reportProgress(input.progress, {
+      status: "failed",
+      phase: "failed",
+      message: "Indexing failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
     await releaseWriteLock();
   }
@@ -87,6 +97,14 @@ export async function updateWorkspace(input: IndexWorkspaceInput): Promise<Index
       mode: "update",
       previousFacts: await readActiveIndexFacts(input.indexPath),
     });
+  } catch (error) {
+    await reportProgress(input.progress, {
+      status: "failed",
+      phase: "failed",
+      message: "Index update failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
     await releaseWriteLock();
   }
@@ -96,6 +114,10 @@ async function buildIndexWorkspace(
   input: IndexWorkspaceInput,
   options: BuildIndexWorkspaceOptions,
 ): Promise<IndexManifest> {
+  await reportProgress(input.progress, {
+    phase: "starting",
+    message: `${options.mode === "index" ? "Starting index" : "Starting update"}`,
+  });
   const embeddingProvider =
     input.embeddingProvider ??
     (await createEmbeddingProvider({
@@ -103,11 +125,23 @@ async function buildIndexWorkspace(
       model: input.embeddingModel,
       indexPath: input.indexPath,
     }));
+  await reportProgress(input.progress, {
+    phase: "discovering",
+    message: "Discovering repositories and source files",
+  });
   const workspace = await discoverWorkspace({
     workspaceRoot: input.workspaceRoot,
     repoPaths: input.repoPaths,
     includeIgnored: input.includeIgnored,
     workspaceManifestPath: input.workspaceManifestPath,
+  });
+  const discoveredFileCount = workspace.repos.reduce((sum, repo) => sum + repo.files.length, 0);
+  await reportProgress(input.progress, {
+    phase: "planning",
+    message: "Planning index facts",
+    counters: {
+      filesDiscovered: discoveredFileCount,
+    },
   });
   const fileFactPlan = await prepareFileFacts({
     workspace,
@@ -116,6 +150,13 @@ async function buildIndexWorkspace(
     mode: options.mode,
     includeIgnored: input.includeIgnored,
     workspaceManifestPath: input.workspaceManifestPath,
+  });
+  await reportProgress(input.progress, {
+    phase: "facts",
+    message: "Building graph facts",
+    counters: {
+      filesParsed: fileFactPlan.fileFactsByKey.size,
+    },
   });
   const graph: MutableGraph = {
     nodes: new Map(),
@@ -331,6 +372,10 @@ async function buildIndexWorkspace(
       });
     }
 
+    await reportProgress(input.progress, {
+      phase: "scip",
+      message: `Running SCIP for ${repo.name}`,
+    });
     const scipOutputPath = join(input.indexPath, "scip", `${repo.name}.scip`);
     const scipRun = await runScipTypescript({
       repoPath: repo.path,
@@ -442,7 +487,22 @@ async function buildIndexWorkspace(
     promoteFinalCallEvidenceEdges(graph, workspace.workspaceName, repo.name);
   }
 
+  await reportProgress(input.progress, {
+    phase: "embeddings",
+    message: "Embedding chunks",
+    counters: {
+      chunksTotal: graph.chunks.size,
+    },
+  });
   const embedStats = await embedGraphChunks(graph.chunks, embeddingProvider, fileFactPlan.embeddingCache);
+  await reportProgress(input.progress, {
+    phase: "embeddings",
+    message: "Embedded chunks",
+    counters: {
+      chunksEmbedded: embedStats.embedded,
+      chunksReused: embedStats.reused,
+    },
+  });
   const generatedAt = new Date().toISOString();
   const incrementalStats = createIncrementalStats({
     mode: options.mode,
@@ -488,12 +548,30 @@ async function buildIndexWorkspace(
       fingerprintKey(left.fingerprint).localeCompare(fingerprintKey(right.fingerprint)),
     ),
   };
+  await reportProgress(input.progress, {
+    phase: "graph",
+    message: "Writing graph generation",
+    counters: {
+      nodesWritten: graph.nodes.size,
+      edgesWritten: graph.edges.size,
+      chunksTotal: graph.chunks.size,
+    },
+  });
   const store = new LadybugGraphStore(input.indexPath);
   const generation = await store.rebuild({
     nodes: [...graph.nodes.values()],
     edges: [...graph.edges.values()],
     chunks: [...graph.chunks.values()],
     embeddingDimension: embeddingProvider.dimension,
+  });
+  await reportProgress(input.progress, {
+    phase: "publishing",
+    message: "Publishing active generation",
+    counters: {
+      nodesWritten: graph.nodes.size,
+      edgesWritten: graph.edges.size,
+      chunksTotal: graph.chunks.size,
+    },
   });
   await writeJsonAtomically(join(generation.generationPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(generation.generationPath, "workspace.json"), workspace);
@@ -526,7 +604,29 @@ async function buildIndexWorkspace(
   await store.publishGeneration(generation.generationId);
   await writeJsonAtomically(join(input.indexPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(input.indexPath, "workspace.json"), workspace);
+  await reportProgress(input.progress, {
+    status: "succeeded",
+    phase: "succeeded",
+    message: `${options.mode === "index" ? "Index" : "Update"} succeeded`,
+    counters: {
+      chunksTotal: graph.chunks.size,
+      chunksEmbedded: embedStats.embedded,
+      chunksReused: embedStats.reused,
+      nodesWritten: graph.nodes.size,
+      edgesWritten: graph.edges.size,
+    },
+  });
   return manifest;
+}
+
+async function reportProgress(
+  reporter: IndexProgressReporter | undefined,
+  update: IndexProgressUpdate,
+): Promise<void> {
+  if (!reporter) {
+    return;
+  }
+  await reporter.report(update);
 }
 
 function addAstBoundaryNodes(

@@ -109,6 +109,53 @@ export const IncrementalStatsSchema = z.object({
   }),
 });
 
+export const IndexProgressOperationSchema = z.enum(["index", "update"]);
+export const IndexProgressStatusSchema = z.enum(["running", "succeeded", "failed", "stale"]);
+export const IndexProgressPhaseSchema = z.enum([
+  "starting",
+  "discovering",
+  "planning",
+  "facts",
+  "scip",
+  "embeddings",
+  "graph",
+  "publishing",
+  "succeeded",
+  "failed",
+]);
+
+export const IndexProgressCountersSchema = z.object({
+  filesDiscovered: z.number().int().min(0).optional(),
+  filesParsed: z.number().int().min(0).optional(),
+  chunksTotal: z.number().int().min(0).optional(),
+  chunksEmbedded: z.number().int().min(0).optional(),
+  chunksReused: z.number().int().min(0).optional(),
+  nodesWritten: z.number().int().min(0).optional(),
+  edgesWritten: z.number().int().min(0).optional(),
+});
+
+export const IndexProgressSnapshotSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  runId: z.string().min(1),
+  operation: IndexProgressOperationSchema,
+  status: IndexProgressStatusSchema,
+  phase: IndexProgressPhaseSchema,
+  message: z.string().min(1),
+  indexPath: z.string().min(1),
+  pid: z.number().int().min(1),
+  startedAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  counters: IndexProgressCountersSchema.default({}),
+  error: z.string().optional(),
+  staleReason: z.enum(["process-exited", "heartbeat-timeout"]).optional(),
+});
+
+export const IndexProgressResultSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  indexPath: z.string().min(1),
+  progress: IndexProgressSnapshotSchema.optional(),
+});
+
 export const IndexManifestSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   workspace: z.string().min(1),
@@ -184,6 +231,7 @@ export const StatusResultSchema = z.object({
   indexPath: z.string().min(1),
   manifest: IndexManifestSchema.optional(),
   manifestPath: z.string().optional(),
+  progress: IndexProgressSnapshotSchema.optional(),
   repos: z.array(z.unknown()).optional(),
 });
 
@@ -224,5 +272,11 @@ export type FileFingerprint = z.infer<typeof FileFingerprintSchema>;
 export type HealthCheck = z.infer<typeof HealthCheckSchema>;
 export type IncrementalStats = z.infer<typeof IncrementalStatsSchema>;
 export type IndexManifest = z.infer<typeof IndexManifestSchema>;
+export type IndexProgressCounters = z.infer<typeof IndexProgressCountersSchema>;
+export type IndexProgressOperation = z.infer<typeof IndexProgressOperationSchema>;
+export type IndexProgressPhase = z.infer<typeof IndexProgressPhaseSchema>;
+export type IndexProgressResult = z.infer<typeof IndexProgressResultSchema>;
+export type IndexProgressSnapshot = z.infer<typeof IndexProgressSnapshotSchema>;
+export type IndexProgressStatus = z.infer<typeof IndexProgressStatusSchema>;
 export type QueryResult = z.infer<typeof QueryResultSchema>;
 export type QueryResultItem = z.infer<typeof QueryResultItemSchema>;

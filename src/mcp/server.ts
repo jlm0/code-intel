@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { createRuntimeContext, type RuntimeOptions } from "../core/context.js";
 import { runHealth } from "../core/health.js";
+import { getIndexProgress } from "../core/progress.js";
 import { getStatus } from "../core/status.js";
 import { diagnoseIndexedFile, diagnoseIndexedSymbol } from "../diagnostics/index-diagnostics.js";
 import { DiagnoseFileResultSchema, DiagnoseSymbolResultSchema } from "../diagnostics/schemas.js";
@@ -12,6 +13,7 @@ import { searchText } from "../search/exact.js";
 import {
   EdgeKindSchema,
   HealthResultSchema,
+  IndexProgressResultSchema,
   McpToolPayloadSchema,
   QueryResultSchema,
   mcpToolOutputSchema,
@@ -51,6 +53,16 @@ export async function startMcpServer(options: RuntimeOptions): Promise<void> {
       await closeQueryEngine();
       return toolPayload("health", await runHealth(options), HealthResultSchema);
     },
+  );
+
+  server.registerTool(
+    "index_progress",
+    {
+      description: "Inspect the current or latest code-intel index/update progress without opening the graph database.",
+      inputSchema: {},
+      outputSchema: mcpToolOutputSchema(IndexProgressResultSchema),
+    },
+    async () => toolPayload("index_progress", await getIndexProgress(options), IndexProgressResultSchema),
   );
 
   server.registerTool(

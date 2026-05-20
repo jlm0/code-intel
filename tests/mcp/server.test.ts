@@ -64,6 +64,7 @@ describe("MCP stdio server", () => {
         expect.arrayContaining([
           "workspace_overview",
           "health",
+          "index_progress",
           "search_text",
           "semantic_search",
           "find_symbol",
@@ -109,7 +110,25 @@ describe("MCP stdio server", () => {
 
       const symbolId = symbolPayload.result.results[0].id;
       const overview = await client.callTool({ name: "workspace_overview", arguments: {} });
-      expect(parseStructuredTool(overview).result.indexed).toBe(true);
+      const overviewPayload = parseStructuredTool(overview);
+      expect(overviewPayload.result.indexed).toBe(true);
+      expect(overviewPayload.result.progress).toMatchObject({
+        operation: "index",
+        status: "succeeded",
+        phase: "succeeded",
+      });
+
+      const progress = await client.callTool({ name: "index_progress", arguments: {} });
+      expect(parseStructuredTool(progress)).toMatchObject({
+        tool: "index_progress",
+        result: {
+          progress: {
+            operation: "index",
+            status: "succeeded",
+            phase: "succeeded",
+          },
+        },
+      });
 
       const text = await client.callTool({
         name: "search_text",

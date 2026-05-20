@@ -1,6 +1,12 @@
 import { createRuntimeContext } from "../core/context.js";
 import { runBenchmarkSuite } from "../benchmark/benchmark.js";
 import { runHealth } from "../core/health.js";
+import {
+  createIndexProgressFileReporter,
+  getIndexProgress,
+  type IndexProgressReporter,
+  type IndexProgressUpdate,
+} from "../core/progress.js";
 import { getStatus } from "../core/status.js";
 import { diagnoseIndexedFile, diagnoseIndexedSymbol } from "../diagnostics/index-diagnostics.js";
 import { runEvalSuite } from "../eval/evaluator.js";
@@ -8,11 +14,11 @@ import { indexWorkspace, updateWorkspace } from "../indexer/indexer.js";
 import { startMcpServer } from "../mcp/server.js";
 import { createQueryEngine, type QueryEngine } from "../query/query-engine.js";
 import { searchText } from "../search/exact.js";
-import type { CliActions } from "./types.js";
+import type { CliActions, CliOptions, CliRuntime } from "./types.js";
 
 export function createDefaultActions(): CliActions {
   return {
-    index: async (options) => {
+    index: async (options, runtime) => {
       const context = createRuntimeContext(options);
       return indexWorkspace({
         workspaceRoot: context.workspace,
@@ -22,9 +28,10 @@ export function createDefaultActions(): CliActions {
         embeddingModel: context.embeddingModel,
         includeIgnored: context.includeIgnored,
         workspaceManifestPath: context.workspaceManifest,
+        progress: createCliProgressReporter(context.indexPath, "index", options, runtime),
       });
     },
-    update: async (options) => {
+    update: async (options, runtime) => {
       const context = createRuntimeContext(options);
       return updateWorkspace({
         workspaceRoot: context.workspace,
@@ -34,11 +41,13 @@ export function createDefaultActions(): CliActions {
         embeddingModel: context.embeddingModel,
         includeIgnored: context.includeIgnored,
         workspaceManifestPath: context.workspaceManifest,
+        progress: createCliProgressReporter(context.indexPath, "update", options, runtime),
       });
     },
+    progress: async (options) => getIndexProgress(options),
     status: getStatus,
     health: runHealth,
-    search: async (options, pattern) => {
+    search: async (options, _runtime, pattern) => {
       const context = createRuntimeContext(options);
       return searchText({
         pattern,
@@ -47,7 +56,7 @@ export function createDefaultActions(): CliActions {
         includeIgnored: context.includeIgnored,
       });
     },
-    semantic: async (options, query) => {
+    semantic: async (options, _runtime, query) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.semanticSearch(query, {
@@ -59,7 +68,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    findSymbol: async (options, name) => {
+    findSymbol: async (options, _runtime, name) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.findSymbol(name, {
@@ -67,7 +76,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    references: async (options, symbol) => {
+    references: async (options, _runtime, symbol) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.getReferences(symbol, {
@@ -75,7 +84,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    relationships: async (options, seed) => {
+    relationships: async (options, _runtime, seed) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.getRelationships(seed, {
@@ -85,7 +94,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    callers: async (options, symbol) => {
+    callers: async (options, _runtime, symbol) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.getCallers(symbol, {
@@ -93,7 +102,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    callees: async (options, symbol) => {
+    callees: async (options, _runtime, symbol) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.getCallees(symbol, {
@@ -101,7 +110,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    expandContext: async (options, nodeId) => {
+    expandContext: async (options, _runtime, nodeId) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.expandContext(nodeId, {
@@ -110,7 +119,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    getContext: async (options, nodeId) => {
+    getContext: async (options, _runtime, nodeId) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.getContext(nodeId, {
@@ -118,7 +127,7 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    tracePath: async (options, fromId, toId) => {
+    tracePath: async (options, _runtime, fromId, toId) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, (engine) =>
         engine.tracePath(fromId, toId, {
@@ -129,11 +138,11 @@ export function createDefaultActions(): CliActions {
         }),
       );
     },
-    diagnoseFile: async (options, filePath) => {
+    diagnoseFile: async (options, _runtime, filePath) => {
       const context = createRuntimeContext(options);
       return diagnoseIndexedFile(context.indexPath, filePath);
     },
-    diagnoseSymbol: async (options, symbolName) => {
+    diagnoseSymbol: async (options, _runtime, symbolName) => {
       const context = createRuntimeContext(options);
       return withQueryEngine(context, async (engine) =>
         diagnoseIndexedSymbol({
@@ -157,6 +166,27 @@ export function createDefaultActions(): CliActions {
     eval: runEvalSuite,
     mcp: startMcpServer,
   };
+}
+
+function createCliProgressReporter(
+  indexPath: string,
+  operation: "index" | "update",
+  options: CliOptions,
+  runtime: CliRuntime,
+): IndexProgressReporter {
+  const fileReporter = createIndexProgressFileReporter({ indexPath, operation });
+  return {
+    report: async (update) => {
+      await fileReporter.report(update);
+      if (!options.quiet) {
+        runtime.stderr.write(renderProgressLine(operation, update));
+      }
+    },
+  };
+}
+
+function renderProgressLine(operation: "index" | "update", update: IndexProgressUpdate): string {
+  return `${operation} ${update.status ?? "running"} ${update.phase}: ${update.message}\n`;
 }
 
 async function withQueryEngine<T>(

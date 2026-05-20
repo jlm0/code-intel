@@ -29,6 +29,7 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
 
   registerCommand(program, "index", "Index one or more JS/TS repositories.", actions.index, runtime);
   registerCommand(program, "update", "Refresh an existing index.", actions.update, runtime);
+  registerCommand(program, "progress", "Show current or latest index progress.", actions.progress, runtime);
   registerCommand(program, "status", "Show index status.", actions.status, runtime);
   registerCommand(program, "health", "Run environment and index health checks.", actions.health, runtime);
   registerCommand(program, "search <pattern>", "Run exact text search.", actions.search, runtime);
@@ -82,7 +83,7 @@ function registerCommand(
   command.action(async (...args: unknown[]) => {
     const positionalArgs = args.filter((arg): arg is string => typeof arg === "string");
     const options = normalizeOptions(command.opts());
-    const result = await action(options, ...positionalArgs);
+    const result = await action(options, runtime, ...positionalArgs);
     if (!config.suppressOutput && result !== undefined && !options.quiet) {
       runtime.stdout.write(
         renderResult(result, {
