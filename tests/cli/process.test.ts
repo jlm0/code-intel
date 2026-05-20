@@ -105,6 +105,9 @@ describe("code-intel process behavior", () => {
       ]);
       const statusPayload = JSON.parse(statusResult.stdout);
       expect(statusPayload.indexed).toBe(true);
+      expect(statusPayload.writeLock).toMatchObject({
+        status: "unlocked",
+      });
       expect(statusPayload.progress).toMatchObject({
         operation: "index",
         status: "succeeded",
@@ -118,15 +121,32 @@ describe("code-intel process behavior", () => {
         fixturePath,
         "--index-path",
         indexPath,
+        "--events",
+        "--limit",
+        "50",
         "--json",
       ]);
       expect(JSON.parse(progressResult.stdout)).toMatchObject({
         indexPath,
+        writeLock: {
+          status: "unlocked",
+        },
         progress: {
           operation: "index",
           status: "succeeded",
           phase: "succeeded",
         },
+        events: expect.arrayContaining([
+          expect.objectContaining({
+            event: "run_succeeded",
+          }),
+          expect.objectContaining({
+            event: "scip_quality",
+            scip: expect.objectContaining({
+              outputBytes: expect.any(Number),
+            }),
+          }),
+        ]),
       });
 
       const symbolResult = await execa("node", [
@@ -272,7 +292,7 @@ describe("code-intel process behavior", () => {
     } finally {
       await rm(indexPath, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 120_000);
 
   it("updates a changed fixture repo incrementally through the built CLI", async () => {
     const workspaceRoot = await copyFixtureWorkspace();

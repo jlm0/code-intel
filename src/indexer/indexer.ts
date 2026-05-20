@@ -13,15 +13,18 @@ import {
   type CodeNode,
   type IncrementalStats,
   type IndexManifest,
+  type IndexProgressStep,
 } from "../schema/schemas.js";
 import { scipFactsSchemaVersion, writeScipFacts, type RepoScipFacts } from "../scip/fact-cache.js";
 import { ingestScipIndex } from "../scip/ingest.js";
+import { createScipQualityReport } from "../scip/quality.js";
 import { runScipTypescript } from "../scip/runner.js";
 import {
   createEmbeddingProvider,
   type EmbeddingProvider,
 } from "../vectors/embedding.js";
 import { discoverWorkspace, type DiscoveredFile } from "../workspace/discovery.js";
+import { summarizeWorkspaceDiscovery } from "../workspace/discovery-summary.js";
 import { embedGraphChunks, type EmbeddableChunkNode } from "./chunk-embeddings.js";
 import { applyFrameworkGraphFacts } from "./framework-graph.js";
 import {
@@ -80,8 +83,9 @@ export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexM
     await reportProgress(input.progress, {
       status: "failed",
       phase: "failed",
+      event: "run_failed",
       message: "Indexing failed",
-      error: error instanceof Error ? error.message : String(error),
+      error,
     });
     throw error;
   } finally {
@@ -101,8 +105,9 @@ export async function updateWorkspace(input: IndexWorkspaceInput): Promise<Index
     await reportProgress(input.progress, {
       status: "failed",
       phase: "failed",
+      event: "run_failed",
       message: "Index update failed",
-      error: error instanceof Error ? error.message : String(error),
+      error,
     });
     throw error;
   } finally {
@@ -116,6 +121,7 @@ async function buildIndexWorkspace(
 ): Promise<IndexManifest> {
   await reportProgress(input.progress, {
     phase: "starting",
+    event: "run_started",
     message: `${options.mode === "index" ? "Starting index" : "Starting update"}`,
   });
   const embeddingProvider =
@@ -136,6 +142,16 @@ async function buildIndexWorkspace(
     workspaceManifestPath: input.workspaceManifestPath,
   });
   const discoveredFileCount = workspace.repos.reduce((sum, repo) => sum + repo.files.length, 0);
+  const discoverySummary = summarizeWorkspaceDiscovery(workspace);
+  await reportProgress(input.progress, {
+    phase: "discovering",
+    event: "discovery_summary",
+    message: "Discovered repositories and source files",
+    counters: {
+      filesDiscovered: discoveredFileCount,
+    },
+    discovery: discoverySummary,
+  });
   await reportProgress(input.progress, {
     phase: "planning",
     message: "Planning index facts",
@@ -374,6 +390,9 @@ async function buildIndexWorkspace(
 
     await reportProgress(input.progress, {
       phase: "scip",
+      event: "step_started",
+      currentRepo: repo.name,
+      currentStep: "scip-run",
       message: `Running SCIP for ${repo.name}`,
     });
     const scipOutputPath = join(input.indexPath, "scip", `${repo.name}.scip`);
@@ -382,9 +401,32 @@ async function buildIndexWorkspace(
       outputPath: scipOutputPath,
       inferTsconfig: true,
     });
+    await reportProgress(input.progress, {
+      phase: "scip",
+      event: "step_succeeded",
+      currentRepo: repo.name,
+      currentStep: "scip-run",
+      message: `Finished SCIP for ${repo.name}`,
+      durationMs: scipRun.durationMs,
+    });
     let scipSymbolNodes = new Map<string, CodeNode>();
     if (scipRun.ok) {
-      const facts = await ingestScipIndex(scipOutputPath);
+      const facts = await withProgressStep(input.progress, {
+        phase: "scip",
+        currentRepo: repo.name,
+        currentStep: "scip-ingest",
+        message: `Ingesting SCIP for ${repo.name}`,
+      }, () => ingestScipIndex(scipOutputPath));
+      const scipQuality = createScipQualityReport(scipRun, facts);
+      await reportProgress(input.progress, {
+        phase: "scip",
+        event: "scip_quality",
+        currentRepo: repo.name,
+        currentStep: "scip-quality",
+        message: `Recorded SCIP quality for ${repo.name}`,
+        scip: scipQuality,
+        warnings: scipQuality.warnings,
+      });
       scipFactsByRepo.push({
         name: repo.name,
         outputPath: scipOutputPath,
@@ -405,11 +447,27 @@ async function buildIndexWorkspace(
       scipSymbolNodes = fusion.scipSymbolNodes;
       health.push({
         name: `scip:${repo.name}`,
-        status: "pass",
-        message: `SCIP indexed ${facts.definitions.length} definitions, ${facts.references.length} references, and ${facts.occurrences.length} occurrences`,
-        details: { outputPath: scipOutputPath },
+        status: scipQuality.warnings.length > 0 ? "warn" : "pass",
+        message: scipQuality.warnings.length > 0
+          ? `SCIP quality warnings: ${scipQuality.warnings.join(", ")}`
+          : `SCIP indexed ${facts.definitions.length} definitions, ${facts.references.length} references, and ${facts.occurrences.length} occurrences`,
+        details: { outputPath: scipOutputPath, ...scipQuality },
       });
     } else {
+      const scipQuality = createScipQualityReport(scipRun, {
+        definitions: [],
+        references: [],
+        occurrences: [],
+      });
+      await reportProgress(input.progress, {
+        phase: "scip",
+        event: "warning",
+        currentRepo: repo.name,
+        currentStep: "scip-run",
+        message: `SCIP failed for ${repo.name}; using Tree-sitter fallback`,
+        scip: scipQuality,
+        warnings: scipQuality.warnings,
+      });
       health.push(
         ...addTreeSitterFallbackRelationships({
           graph,
@@ -433,14 +491,24 @@ async function buildIndexWorkspace(
         },
       });
     }
-    const resolvedModuleFacts = await buildRepoResolvedModuleFacts({
+    const resolvedModuleFacts = await withProgressStep(input.progress, {
+      phase: "graph",
+      currentRepo: repo.name,
+      currentStep: "module-resolution",
+      message: `Resolving modules for ${repo.name}`,
+    }, () => buildRepoResolvedModuleFacts({
       repo,
       fileFactsByRelativePath,
       astSymbolsByFile,
       scipSymbolNodes,
-    });
+    }));
     resolvedFactsByRepo.push(resolvedModuleFacts);
-    applyResolvedModuleGraphFacts({
+    await withProgressStep(input.progress, {
+      phase: "graph",
+      currentRepo: repo.name,
+      currentStep: "resolved-module-graph",
+      message: `Applying resolved module graph for ${repo.name}`,
+    }, () => applyResolvedModuleGraphFacts({
       workspaceName: workspace.workspaceName,
       repo,
       facts: resolvedModuleFacts,
@@ -452,16 +520,26 @@ async function buildIndexWorkspace(
       fileFactsByRelativePath,
       addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
         addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
-    });
-    applyFrameworkGraphFacts({
+    }));
+    await withProgressStep(input.progress, {
+      phase: "graph",
+      currentRepo: repo.name,
+      currentStep: "framework-graph",
+      message: `Applying framework graph for ${repo.name}`,
+    }, () => applyFrameworkGraphFacts({
       workspaceName: workspace.workspaceName,
       repo,
       fileNodes,
       astSymbolsByFile,
       addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
         addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
-    });
-    applyRelationshipGraphFacts({
+    }));
+    await withProgressStep(input.progress, {
+      phase: "graph",
+      currentRepo: repo.name,
+      currentStep: "relationship-graph",
+      message: `Applying relationship graph for ${repo.name}`,
+    }, () => applyRelationshipGraphFacts({
       workspaceName: workspace.workspaceName,
       repo,
       nodes: graph.nodes,
@@ -472,8 +550,13 @@ async function buildIndexWorkspace(
       addNode: (node) => addNode(graph, node),
       addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
         addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
-    });
-    applyTestLinkingGraphFacts({
+    }));
+    await withProgressStep(input.progress, {
+      phase: "graph",
+      currentRepo: repo.name,
+      currentStep: "test-linking",
+      message: `Applying test-linking graph for ${repo.name}`,
+    }, () => applyTestLinkingGraphFacts({
       workspaceName: workspace.workspaceName,
       repo,
       nodes: graph.nodes,
@@ -483,8 +566,13 @@ async function buildIndexWorkspace(
       fileFactsByRelativePath,
       addEdge: (kind, fromId, toId, edgeWorkspace, edgeRepo, metadata) =>
         addEdge(graph, kind, fromId, toId, edgeWorkspace, edgeRepo, metadata),
-    });
-    promoteFinalCallEvidenceEdges(graph, workspace.workspaceName, repo.name);
+    }));
+    await withProgressStep(input.progress, {
+      phase: "graph",
+      currentRepo: repo.name,
+      currentStep: "final-call-promotion",
+      message: `Promoting final call evidence for ${repo.name}`,
+    }, () => promoteFinalCallEvidenceEdges(graph, workspace.workspaceName, repo.name));
   }
 
   await reportProgress(input.progress, {
@@ -627,6 +715,53 @@ async function reportProgress(
     return;
   }
   await reporter.report(update);
+}
+
+async function withProgressStep<T>(
+  reporter: IndexProgressReporter | undefined,
+  input: {
+    phase: IndexProgressUpdate["phase"];
+    currentRepo?: string;
+    currentStep: IndexProgressStep;
+    message: string;
+  },
+  callback: () => T | Promise<T>,
+): Promise<T> {
+  const startedAt = new Date();
+  await reportProgress(reporter, {
+    phase: input.phase,
+    event: "step_started",
+    currentRepo: input.currentRepo,
+    currentStep: input.currentStep,
+    startedStepAt: startedAt.toISOString(),
+    message: input.message,
+  });
+  try {
+    const result = await callback();
+    await reportProgress(reporter, {
+      phase: input.phase,
+      event: "step_succeeded",
+      currentRepo: input.currentRepo,
+      currentStep: input.currentStep,
+      startedStepAt: startedAt.toISOString(),
+      message: `${input.message} finished`,
+      durationMs: Date.now() - startedAt.getTime(),
+    });
+    return result;
+  } catch (error) {
+    await reportProgress(reporter, {
+      phase: input.phase,
+      status: "failed",
+      event: "step_failed",
+      currentRepo: input.currentRepo,
+      currentStep: input.currentStep,
+      startedStepAt: startedAt.toISOString(),
+      message: `${input.message} failed`,
+      durationMs: Date.now() - startedAt.getTime(),
+      error,
+    });
+    throw error;
+  }
 }
 
 function addAstBoundaryNodes(

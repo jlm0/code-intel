@@ -24,6 +24,7 @@ export interface CliOptions extends RuntimeOptions {
   fetch?: boolean;
   diagnostics?: boolean;
   includeMcpLatency?: boolean;
+  events?: boolean;
 }
 
 export type CliAction = (options: CliOptions, runtime: CliRuntime, ...args: string[]) => Promise<unknown>;

@@ -44,7 +44,10 @@ export function createDefaultActions(): CliActions {
         progress: createCliProgressReporter(context.indexPath, "update", options, runtime),
       });
     },
-    progress: async (options) => getIndexProgress(options),
+    progress: async (options) => getIndexProgress(options, {
+      includeEvents: options.events === true,
+      limit: options.limit ?? 20,
+    }),
     status: getStatus,
     health: runHealth,
     search: async (options, _runtime, pattern) => {
@@ -186,7 +189,8 @@ function createCliProgressReporter(
 }
 
 function renderProgressLine(operation: "index" | "update", update: IndexProgressUpdate): string {
-  return `${operation} ${update.status ?? "running"} ${update.phase}: ${update.message}\n`;
+  const step = update.currentStep ? ` ${update.currentStep}` : "";
+  return `${operation} ${update.status ?? "running"} ${update.phase}${step}: ${update.message}\n`;
 }
 
 async function withQueryEngine<T>(

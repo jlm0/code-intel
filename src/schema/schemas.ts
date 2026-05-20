@@ -134,6 +134,97 @@ export const IndexProgressCountersSchema = z.object({
   edgesWritten: z.number().int().min(0).optional(),
 });
 
+export const IndexProgressEventTypeSchema = z.enum([
+  "run_started",
+  "phase_started",
+  "discovery_summary",
+  "step_started",
+  "step_succeeded",
+  "step_failed",
+  "scip_quality",
+  "warning",
+  "run_succeeded",
+  "run_failed",
+]);
+export const IndexProgressWriterStatusSchema = z.enum(["running", "succeeded", "failed"]);
+export const IndexProgressStepSchema = z.enum([
+  "scip-run",
+  "scip-ingest",
+  "scip-quality",
+  "module-resolution",
+  "resolved-module-graph",
+  "framework-graph",
+  "relationship-graph",
+  "test-linking",
+  "final-call-promotion",
+]);
+
+export const IndexProgressMemorySchema = z.object({
+  rssMb: z.number().min(0),
+  heapUsedMb: z.number().min(0),
+});
+
+export const IndexProgressErrorDetailsSchema = z.object({
+  name: z.string().min(1),
+  message: z.string(),
+  code: z.string().optional(),
+  stack: z.string().optional(),
+});
+
+export const IndexProgressScipQualitySchema = z.object({
+  outputBytes: z.number().int().min(0),
+  durationMs: z.number().min(0),
+  exitCode: z.number().int().nullable(),
+  definitions: z.number().int().min(0),
+  references: z.number().int().min(0),
+  occurrences: z.number().int().min(0),
+  stdoutSummary: z.string().optional(),
+  stderrSummary: z.string().optional(),
+  warnings: z.array(z.string()).default([]),
+});
+
+export const IndexDiscoverySummarySchema = z.object({
+  totals: z.object({
+    repos: z.number().int().min(0),
+    packages: z.number().int().min(0),
+    includedFiles: z.number().int().min(0),
+    unsupportedFiles: z.number().int().min(0),
+    ignoredDirectories: z.number().int().min(0),
+    tsconfigExcludedFiles: z.number().int().min(0),
+    outsideSourceRootFiles: z.number().int().min(0),
+  }),
+  repos: z.array(
+    z.object({
+      repo: z.string().min(1),
+      path: z.string().min(1),
+      packages: z.array(
+        z.object({
+          name: z.string().min(1),
+          path: z.string().min(1),
+          sourceRoots: z.array(z.string()).default([]),
+          includedFiles: z.number().int().min(0),
+          tsconfigExcludedFiles: z.number().int().min(0),
+          outsideSourceRootFiles: z.number().int().min(0),
+        }),
+      ),
+      includedFiles: z.number().int().min(0),
+      unsupportedFiles: z.number().int().min(0),
+      ignoredDirectories: z.number().int().min(0),
+      tsconfigExcludedFiles: z.number().int().min(0),
+      outsideSourceRootFiles: z.number().int().min(0),
+    }),
+  ),
+});
+
+export const IndexWriteLockStateSchema = z.object({
+  status: z.enum(["unlocked", "held", "stale"]),
+  path: z.string().min(1),
+  pid: z.number().int().min(1).optional(),
+  createdAt: z.string().datetime().optional(),
+  ageMs: z.number().int().min(0).optional(),
+  alive: z.boolean().optional(),
+});
+
 export const IndexProgressSnapshotSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   runId: z.string().min(1),
@@ -145,15 +236,90 @@ export const IndexProgressSnapshotSchema = z.object({
   pid: z.number().int().min(1),
   startedAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  currentRepo: z.string().min(1).optional(),
+  currentStep: IndexProgressStepSchema.optional(),
+  startedStepAt: z.string().datetime().optional(),
   counters: IndexProgressCountersSchema.default({}),
   error: z.string().optional(),
+  errorDetails: IndexProgressErrorDetailsSchema.optional(),
+  warnings: z.array(z.string()).default([]),
   staleReason: z.enum(["process-exited", "heartbeat-timeout"]).optional(),
 });
+
+const IndexProgressEventBaseSchema = z.object({
+  schemaVersion: z.literal(schemaVersion),
+  runId: z.string().min(1),
+  operation: IndexProgressOperationSchema,
+  phase: IndexProgressPhaseSchema,
+  status: IndexProgressWriterStatusSchema.optional(),
+  message: z.string().min(1),
+  indexPath: z.string().min(1),
+  pid: z.number().int().min(1),
+  timestamp: z.string().datetime(),
+  currentRepo: z.string().min(1).optional(),
+  currentStep: IndexProgressStepSchema.optional(),
+  startedStepAt: z.string().datetime().optional(),
+  durationMs: z.number().min(0).optional(),
+  counters: IndexProgressCountersSchema.default({}),
+  memory: IndexProgressMemorySchema,
+  error: IndexProgressErrorDetailsSchema.optional(),
+  warnings: z.array(z.string()).default([]),
+  scip: IndexProgressScipQualitySchema.optional(),
+  discovery: IndexDiscoverySummarySchema.optional(),
+});
+
+export const IndexProgressEventSchema = z.discriminatedUnion("event", [
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("run_started"),
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("phase_started"),
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("discovery_summary"),
+    discovery: IndexDiscoverySummarySchema,
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("step_started"),
+    currentStep: IndexProgressStepSchema,
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("step_succeeded"),
+    currentStep: IndexProgressStepSchema,
+    durationMs: z.number().min(0),
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("step_failed"),
+    status: z.literal("failed"),
+    currentStep: IndexProgressStepSchema,
+    durationMs: z.number().min(0),
+    error: IndexProgressErrorDetailsSchema,
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("scip_quality"),
+    currentStep: z.literal("scip-quality"),
+    scip: IndexProgressScipQualitySchema,
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("warning"),
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("run_succeeded"),
+    status: z.literal("succeeded"),
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("run_failed"),
+    status: z.literal("failed"),
+    error: IndexProgressErrorDetailsSchema,
+  }),
+]);
 
 export const IndexProgressResultSchema = z.object({
   schemaVersion: z.literal(schemaVersion),
   indexPath: z.string().min(1),
   progress: IndexProgressSnapshotSchema.optional(),
+  events: z.array(IndexProgressEventSchema).optional(),
+  writeLock: IndexWriteLockStateSchema,
 });
 
 export const IndexManifestSchema = z.object({
@@ -232,6 +398,7 @@ export const StatusResultSchema = z.object({
   manifest: IndexManifestSchema.optional(),
   manifestPath: z.string().optional(),
   progress: IndexProgressSnapshotSchema.optional(),
+  writeLock: IndexWriteLockStateSchema,
   repos: z.array(z.unknown()).optional(),
 });
 
@@ -273,10 +440,17 @@ export type HealthCheck = z.infer<typeof HealthCheckSchema>;
 export type IncrementalStats = z.infer<typeof IncrementalStatsSchema>;
 export type IndexManifest = z.infer<typeof IndexManifestSchema>;
 export type IndexProgressCounters = z.infer<typeof IndexProgressCountersSchema>;
+export type IndexDiscoverySummary = z.infer<typeof IndexDiscoverySummarySchema>;
+export type IndexProgressErrorDetails = z.infer<typeof IndexProgressErrorDetailsSchema>;
+export type IndexProgressEvent = z.infer<typeof IndexProgressEventSchema>;
+export type IndexProgressEventType = z.infer<typeof IndexProgressEventTypeSchema>;
 export type IndexProgressOperation = z.infer<typeof IndexProgressOperationSchema>;
 export type IndexProgressPhase = z.infer<typeof IndexProgressPhaseSchema>;
 export type IndexProgressResult = z.infer<typeof IndexProgressResultSchema>;
+export type IndexProgressScipQuality = z.infer<typeof IndexProgressScipQualitySchema>;
 export type IndexProgressSnapshot = z.infer<typeof IndexProgressSnapshotSchema>;
 export type IndexProgressStatus = z.infer<typeof IndexProgressStatusSchema>;
+export type IndexProgressStep = z.infer<typeof IndexProgressStepSchema>;
+export type IndexWriteLockState = z.infer<typeof IndexWriteLockStateSchema>;
 export type QueryResult = z.infer<typeof QueryResultSchema>;
 export type QueryResultItem = z.infer<typeof QueryResultItemSchema>;

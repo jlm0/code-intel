@@ -29,7 +29,9 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
 
   registerCommand(program, "index", "Index one or more JS/TS repositories.", actions.index, runtime);
   registerCommand(program, "update", "Refresh an existing index.", actions.update, runtime);
-  registerCommand(program, "progress", "Show current or latest index progress.", actions.progress, runtime);
+  registerCommand(program, "progress", "Show current or latest index progress.", actions.progress, runtime, {
+    addOptions: addProgressOptions,
+  });
   registerCommand(program, "status", "Show index status.", actions.status, runtime);
   registerCommand(program, "health", "Run environment and index health checks.", actions.health, runtime);
   registerCommand(program, "search <pattern>", "Run exact text search.", actions.search, runtime);
@@ -136,12 +138,17 @@ function normalizeOptions(options: Record<string, unknown>): CliOptions {
     fetch: options.fetch === true,
     diagnostics: options.diagnostics === true,
     includeMcpLatency: options.skipMcpLatency === true ? false : undefined,
+    events: options.events === true,
     json: options.json === true,
     quiet: options.quiet === true,
     verbose: options.verbose === true,
     limit: boundedOption(options.limit, 50, "limit"),
     depth: boundedOption(options.depth, 4, "depth"),
   };
+}
+
+function addProgressOptions(command: Command): void {
+  command.option("--events", "Include recent append-only JSONL progress events.", false);
 }
 
 function addBenchmarkOptions(command: Command): void {

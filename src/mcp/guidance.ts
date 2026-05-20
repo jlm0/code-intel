@@ -15,7 +15,7 @@ const commonEvidence = [
 const toolGuidance: Record<string, McpGuidance> = {
   workspace_overview: {
     purpose: "Confirm the active index and repositories before querying.",
-    evidenceFields: ["manifest", "repos", "indexPath", "progress.status", "progress.phase"],
+    evidenceFields: ["manifest", "repos", "indexPath", "progress.status", "progress.phase", "writeLock.status"],
     nextTools: ["health", "index_progress", "semantic_search", "find_symbol"],
     examples: ["Call workspace_overview first when a repo may not be indexed or indexing may still be running."],
   },
@@ -27,9 +27,9 @@ const toolGuidance: Record<string, McpGuidance> = {
   },
   index_progress: {
     purpose: "Check whether index or update work is running, succeeded, failed, or stale.",
-    evidenceFields: ["progress.status", "progress.phase", "progress.counters", "progress.staleReason"],
+    evidenceFields: ["progress.status", "progress.phase", "progress.currentStep", "events[].event", "writeLock.status"],
     nextTools: ["workspace_overview", "health"],
-    examples: ["Poll index_progress while a CLI index command is running before trusting new results."],
+    examples: ["Poll index_progress with includeEvents while a CLI index command is running before trusting new results."],
   },
   search_text: {
     purpose: "Find exact strings with bounded ripgrep output.",

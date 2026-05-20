@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,11 +6,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   createIndexProgressFileReporter,
+  getIndexProgress,
+  progressLogPath,
   progressCurrentPath,
   readIndexProgress,
   writeIndexProgress,
 } from "../../src/core/progress.js";
-import { IndexProgressSnapshotSchema, schemaVersion } from "../../src/schema/schemas.js";
+import { IndexProgressEventSchema, IndexProgressSnapshotSchema, schemaVersion } from "../../src/schema/schemas.js";
 
 describe("index progress persistence", () => {
   it("writes atomic progress snapshots under the index progress directory", async () => {
@@ -150,7 +152,158 @@ describe("index progress persistence", () => {
     }
   });
 
-  it("rejects invalid progress status and operation shapes", () => {
+  it("appends JSONL events and returns recent events through the progress query", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-progress-events-"));
+    let now = new Date("2026-05-20T12:00:00.000Z");
+    try {
+      const reporter = createIndexProgressFileReporter({
+        indexPath,
+        operation: "index",
+        runId: "run-events",
+        now: () => now,
+      });
+
+      await reporter.report({
+        phase: "graph",
+        event: "step_started",
+        currentRepo: "fixture",
+        currentStep: "relationship-graph",
+        message: "Building relationship graph",
+      });
+      now = new Date("2026-05-20T12:00:01.000Z");
+      await reporter.report({
+        phase: "graph",
+        event: "step_succeeded",
+        currentRepo: "fixture",
+        currentStep: "relationship-graph",
+        message: "Built relationship graph",
+        durationMs: 1000,
+        counters: { edgesWritten: 2 },
+      });
+
+      const events = (await readFile(progressLogPath(indexPath, "run-events"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(events).toMatchObject([
+        {
+          event: "step_started",
+          phase: "graph",
+          currentRepo: "fixture",
+          currentStep: "relationship-graph",
+          memory: {
+            rssMb: expect.any(Number),
+            heapUsedMb: expect.any(Number),
+          },
+        },
+        {
+          event: "step_succeeded",
+          durationMs: 1000,
+          counters: { edgesWritten: 2 },
+        },
+      ]);
+      await expect(readIndexProgress(indexPath, {
+        isPidAlive: () => true,
+        now: new Date("2026-05-20T12:00:02.000Z"),
+      })).resolves.toMatchObject({
+        phase: "graph",
+        currentRepo: "fixture",
+        currentStep: "relationship-graph",
+        startedStepAt: "2026-05-20T12:00:00.000Z",
+      });
+
+      await expect(getIndexProgress(
+        { workspace: indexPath, indexPath: "." },
+        { includeEvents: true, limit: 1, now: new Date("2026-05-20T12:00:02.000Z") },
+      )).resolves.toMatchObject({
+        events: [
+          {
+            event: "step_succeeded",
+            currentStep: "relationship-graph",
+          },
+        ],
+        writeLock: {
+          status: "unlocked",
+        },
+      });
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  });
+
+  it("records rich failure details in progress events", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-progress-error-"));
+    try {
+      const reporter = createIndexProgressFileReporter({
+        indexPath,
+        operation: "update",
+        runId: "run-error",
+        now: () => new Date("2026-05-20T12:00:00.000Z"),
+      });
+      const error = Object.assign(new TypeError("index exploded"), { code: "ERR_INDEX_EXPLODED" });
+      error.stack = `TypeError: index exploded\n${"x".repeat(10_000)}`;
+
+      await reporter.report({
+        status: "failed",
+        phase: "failed",
+        event: "run_failed",
+        message: "Index update failed",
+        error,
+      });
+
+      const [event] = (await readFile(progressLogPath(indexPath, "run-error"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(event.error).toMatchObject({
+        name: "TypeError",
+        code: "ERR_INDEX_EXPLODED",
+        message: "index exploded",
+        stack: expect.stringContaining("TypeError: index exploded"),
+      });
+      expect(Buffer.byteLength(event.error.stack, "utf8")).toBeLessThanOrEqual(4096);
+      await expect(readIndexProgress(indexPath)).resolves.toMatchObject({
+        status: "failed",
+        error: "index exploded",
+        errorDetails: {
+          name: "TypeError",
+          code: "ERR_INDEX_EXPLODED",
+        },
+      });
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  });
+
+  it("reports index write lock ownership and age", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-progress-lock-"));
+    const lockPath = join(indexPath, ".index-write.lock");
+    try {
+      await mkdir(lockPath);
+      await writeFile(
+        join(lockPath, "owner.json"),
+        JSON.stringify({ pid: process.pid, createdAt: "2026-05-20T12:00:00.000Z" }),
+      );
+
+      await expect(getIndexProgress(
+        { workspace: indexPath, indexPath: "." },
+        { now: new Date("2026-05-20T12:00:03.000Z") },
+      )).resolves.toMatchObject({
+        writeLock: {
+          status: "held",
+          path: lockPath,
+          pid: process.pid,
+          createdAt: "2026-05-20T12:00:00.000Z",
+          ageMs: 3000,
+          alive: true,
+        },
+      });
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid progress status, operation, and step shapes", () => {
     expect(() =>
       IndexProgressSnapshotSchema.parse({
         schemaVersion,
@@ -164,6 +317,59 @@ describe("index progress persistence", () => {
         startedAt: "2026-05-20T12:00:00.000Z",
         updatedAt: "2026-05-20T12:00:00.000Z",
         counters: {},
+      }),
+    ).toThrow();
+    expect(() =>
+      IndexProgressSnapshotSchema.parse({
+        schemaVersion,
+        runId: "bad-step",
+        operation: "index",
+        status: "running",
+        phase: "graph",
+        currentStep: "almost-relationship-graph",
+        message: "Bad snapshot",
+        indexPath: "/tmp/index",
+        pid: process.pid,
+        startedAt: "2026-05-20T12:00:00.000Z",
+        updatedAt: "2026-05-20T12:00:00.000Z",
+        counters: {},
+      }),
+    ).toThrow();
+  });
+
+  it("requires event-specific payload fields", () => {
+    const baseEvent = {
+      schemaVersion,
+      runId: "run-event",
+      operation: "index",
+      phase: "scip",
+      message: "Recorded SCIP quality",
+      indexPath: "/tmp/index",
+      pid: process.pid,
+      timestamp: "2026-05-20T12:00:00.000Z",
+      counters: {},
+      memory: { rssMb: 1, heapUsedMb: 1 },
+    };
+
+    expect(() =>
+      IndexProgressEventSchema.parse({
+        ...baseEvent,
+        event: "scip_quality",
+        currentStep: "scip-quality",
+      }),
+    ).toThrow();
+    expect(() =>
+      IndexProgressEventSchema.parse({
+        ...baseEvent,
+        event: "step_started",
+        currentStep: "not-a-real-step",
+      }),
+    ).toThrow();
+    expect(() =>
+      IndexProgressEventSchema.parse({
+        ...baseEvent,
+        event: "phase_started",
+        status: "stale",
       }),
     ).toThrow();
   });

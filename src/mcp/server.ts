@@ -59,10 +59,18 @@ export async function startMcpServer(options: RuntimeOptions): Promise<void> {
     "index_progress",
     {
       description: "Inspect the current or latest code-intel index/update progress without opening the graph database.",
-      inputSchema: {},
+      inputSchema: {
+        includeEvents: z.boolean().optional().describe("Include recent append-only progress events from the current run log."),
+        limit: z.number().int().min(1).max(50).optional().describe("Maximum recent event count when includeEvents is true. Defaults to 20."),
+      },
       outputSchema: mcpToolOutputSchema(IndexProgressResultSchema),
     },
-    async () => toolPayload("index_progress", await getIndexProgress(options), IndexProgressResultSchema),
+    async ({ includeEvents, limit }) =>
+      toolPayload(
+        "index_progress",
+        await getIndexProgress(options, { includeEvents, limit: limit ?? 20 }),
+        IndexProgressResultSchema,
+      ),
   );
 
   server.registerTool(

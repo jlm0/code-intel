@@ -71,7 +71,7 @@ Run common queries:
 ```bash
 code-intel semantic "wallet signer" --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
 code-intel find-symbol SomeSymbol --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
-code-intel relationships SomeSymbol --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --direction both --json
+code-intel relationships SomeSymbol --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --direction either --json
 code-intel trace-path SourceSymbol TargetSymbol --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
 code-intel get-context node-id-or-file --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
 ```
@@ -86,7 +86,10 @@ Check current or latest index progress:
 
 ```bash
 code-intel progress --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --json
+code-intel progress --workspace /path/to/workspace --index-path /path/to/workspace/.code-intel/index --events --limit 50 --json
 ```
+
+`progress --events` includes recent JSONL run events with substeps, discovery summaries, SCIP quality details, memory usage, durations, and failure details. `progress` and `status` include write-lock state.
 
 If `--repo` is omitted, `index` uses `--workspace-manifest` when provided and otherwise indexes the workspace root. Generated folders, dependency folders, build output, logs, and local runtime folders are ignored by default.
 

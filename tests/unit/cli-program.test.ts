@@ -75,7 +75,7 @@ describe("createCliProgram", () => {
     );
   });
 
-  it("delegates progress command actions to injected handlers", async () => {
+  it("delegates progress command actions with event options to injected handlers", async () => {
     const progress = vi.fn(async () => ({ schemaVersion: "code-intel.v1", indexPath: "/tmp/index" }));
     const program = createCliProgram({
       actions: { progress },
@@ -83,12 +83,12 @@ describe("createCliProgram", () => {
       stderr: { write: vi.fn() },
     });
 
-    await program.parseAsync(["node", "code-intel", "progress", "--json"], {
+    await program.parseAsync(["node", "code-intel", "progress", "--json", "--events", "--limit", "5"], {
       from: "node",
     });
 
     expect(progress).toHaveBeenCalledWith(
-      expect.objectContaining({ json: true }),
+      expect.objectContaining({ json: true, events: true, limit: 5 }),
       expect.objectContaining({
         stderr: expect.any(Object),
         stdout: expect.any(Object),

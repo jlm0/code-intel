@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createIndexProgressFileReporter,
+  getIndexProgress,
   readIndexProgress,
   type IndexProgressReporter,
 } from "../../src/core/progress.js";
@@ -66,6 +67,49 @@ describe("index progress integration", () => {
           edgesWritten: manifest.stats.edges,
         },
       });
+
+      const progressResult = await getIndexProgress(
+        { workspace: workspaceRoot, indexPath },
+        { includeEvents: true, limit: 200 },
+      );
+      expect(progressResult.events?.map((event) => event.currentStep)).toEqual(
+        expect.arrayContaining([
+          "module-resolution",
+          "resolved-module-graph",
+          "framework-graph",
+          "relationship-graph",
+          "test-linking",
+          "final-call-promotion",
+        ]),
+      );
+      expect(progressResult.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            event: "discovery_summary",
+            discovery: expect.objectContaining({
+              totals: expect.objectContaining({
+                includedFiles: expect.any(Number),
+                unsupportedFiles: expect.any(Number),
+                ignoredDirectories: expect.any(Number),
+                tsconfigExcludedFiles: expect.any(Number),
+                outsideSourceRootFiles: expect.any(Number),
+              }),
+            }),
+          }),
+          expect.objectContaining({
+            event: "scip_quality",
+            currentRepo: expect.any(String),
+            scip: expect.objectContaining({
+              outputBytes: expect.any(Number),
+              durationMs: expect.any(Number),
+              definitions: expect.any(Number),
+              references: expect.any(Number),
+              occurrences: expect.any(Number),
+              warnings: expect.any(Array),
+            }),
+          }),
+        ]),
+      );
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
       await rm(indexPath, { recursive: true, force: true });
@@ -105,7 +149,27 @@ describe("index progress integration", () => {
         operation: "update",
         status: "failed",
         phase: "failed",
+        errorDetails: {
+          name: "Error",
+          stack: expect.stringContaining("Repository path"),
+        },
       });
+      const progressResult = await getIndexProgress(
+        { workspace: workspaceRoot, indexPath },
+        { includeEvents: true, limit: 10 },
+      );
+      expect(progressResult.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            event: "run_failed",
+            error: expect.objectContaining({
+              name: "Error",
+              message: expect.stringContaining("Repository path"),
+              stack: expect.stringContaining("Repository path"),
+            }),
+          }),
+        ]),
+      );
       await expect(readActiveManifest(indexPath)).resolves.toMatchObject({
         generatedAt: initialManifest.generatedAt,
         stats: initialManifest.stats,

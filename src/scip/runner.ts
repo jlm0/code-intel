@@ -2,6 +2,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { performance } from "node:perf_hooks";
 
 import { truncateUtf8Bytes } from "../core/text.js";
 
@@ -17,9 +18,12 @@ export interface RunScipTypescriptInput {
 export interface RunScipTypescriptResult {
   ok: boolean;
   outputPath: string;
+  outputBytes: number;
+  durationMs: number;
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  timedOut: boolean;
 }
 
 export async function runScipTypescript(
@@ -39,6 +43,7 @@ export async function runScipTypescript(
   }
 
   return new Promise((resolvePromise, rejectPromise) => {
+    const startedAt = performance.now();
     const timeoutMs = input.timeoutMs ?? 120_000;
     const maxOutputBytes = input.maxOutputBytes ?? 128_000;
     const maxScipBytes = input.maxScipBytes ?? 128_000_000;
@@ -74,11 +79,14 @@ export async function runScipTypescript(
       clearTimeout(timeout);
       if (hardKillTimeout) clearTimeout(hardKillTimeout);
       const scipSize = await outputFileSize(input.outputPath);
+      const durationMs = Math.round(performance.now() - startedAt);
       if (scipSize > maxScipBytes) {
         await rm(input.outputPath, { force: true });
         resolvePromise({
           ok: false,
           outputPath: input.outputPath,
+          outputBytes: scipSize,
+          durationMs,
           stdout,
           stderr: appendBounded(
             stderr,
@@ -86,15 +94,19 @@ export async function runScipTypescript(
             maxOutputBytes,
           ),
           exitCode,
+          timedOut,
         });
         return;
       }
       resolvePromise({
         ok: exitCode === 0 && !timedOut,
         outputPath: input.outputPath,
+        outputBytes: scipSize,
+        durationMs,
         stdout,
         stderr: timedOut ? appendBounded(stderr, `\nscip-typescript timed out after ${timeoutMs}ms`, maxOutputBytes) : stderr,
         exitCode,
+        timedOut,
       });
     });
   });

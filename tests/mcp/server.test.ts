@@ -112,21 +112,41 @@ describe("MCP stdio server", () => {
       const overview = await client.callTool({ name: "workspace_overview", arguments: {} });
       const overviewPayload = parseStructuredTool(overview);
       expect(overviewPayload.result.indexed).toBe(true);
+      expect(overviewPayload.result.writeLock).toMatchObject({
+        status: "unlocked",
+      });
       expect(overviewPayload.result.progress).toMatchObject({
         operation: "index",
         status: "succeeded",
         phase: "succeeded",
       });
 
-      const progress = await client.callTool({ name: "index_progress", arguments: {} });
+      const progress = await client.callTool({
+        name: "index_progress",
+        arguments: { includeEvents: true, limit: 50 },
+      });
       expect(parseStructuredTool(progress)).toMatchObject({
         tool: "index_progress",
         result: {
+          writeLock: {
+            status: "unlocked",
+          },
           progress: {
             operation: "index",
             status: "succeeded",
             phase: "succeeded",
           },
+          events: expect.arrayContaining([
+            expect.objectContaining({
+              event: "run_succeeded",
+            }),
+            expect.objectContaining({
+              event: "scip_quality",
+              scip: expect.objectContaining({
+                outputBytes: expect.any(Number),
+              }),
+            }),
+          ]),
         },
       });
 
