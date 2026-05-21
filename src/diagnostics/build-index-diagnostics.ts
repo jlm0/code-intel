@@ -1,5 +1,4 @@
 import { schemaVersion, type CodeEdge, type CodeNode } from "../schema/schemas.js";
-import type { RepoScipFacts } from "../scip/fact-cache.js";
 import type { DiscoveredWorkspace, DiscoveryFileDiagnostic } from "../workspace/discovery.js";
 import type { FileFact } from "../indexer/fact-cache.js";
 import { fingerprintKey } from "../indexer/update-planner.js";
@@ -15,12 +14,11 @@ export function buildIndexDiagnostics(input: {
   workspace: DiscoveredWorkspace;
   generatedAt: string;
   fileFactsByKey: Map<string, FileFact>;
-  scipFactsByRepo: RepoScipFacts[];
+  scipCountsByFile: Map<string, { definitions: number; references: number }>;
   nodes: Iterable<CodeNode>;
   edges: Iterable<CodeEdge>;
 }): IndexDiagnostics {
   const graphCounts = countGraphByFile(input.nodes, input.edges);
-  const scipCounts = countScipByFile(input.scipFactsByRepo);
   const indexedFiles = new Set<string>();
   const files: FileLifecycleDiagnostic[] = [];
 
@@ -29,7 +27,7 @@ export function buildIndexDiagnostics(input: {
       const key = fingerprintKey({ repo: repo.name, relativePath: file.relativePath });
       const fileFact = input.fileFactsByKey.get(key);
       const graph = graphCounts.get(key) ?? emptyGraphCounts();
-      const scip = scipCounts.get(key) ?? { definitions: 0, references: 0 };
+      const scip = input.scipCountsByFile.get(key) ?? { definitions: 0, references: 0 };
       const symbolNames = symbolNamesForFile(fileFact);
       const embeddedChunks = fileFact?.chunks.filter((chunk) => (chunk.embedding?.length ?? 0) > 0).length ?? 0;
       const graphWritten = graph.nodes > 0;
@@ -188,32 +186,6 @@ function countGraphByFile(nodes: Iterable<CodeNode>, edges: Iterable<CodeEdge>):
     counts.set(key, count);
   }
   return counts;
-}
-
-function countScipByFile(repos: RepoScipFacts[]): Map<string, { definitions: number; references: number }> {
-  const counts = new Map<string, { definitions: number; references: number }>();
-  for (const repo of repos) {
-    for (const definition of repo.definitions) {
-      const count = scipCount(counts, repo.name, definition.relativePath);
-      count.definitions += 1;
-    }
-    for (const reference of repo.references) {
-      const count = scipCount(counts, repo.name, reference.relativePath);
-      count.references += 1;
-    }
-  }
-  return counts;
-}
-
-function scipCount(
-  counts: Map<string, { definitions: number; references: number }>,
-  repo: string,
-  relativePath: string,
-): { definitions: number; references: number } {
-  const key = fingerprintKey({ repo, relativePath });
-  const count = counts.get(key) ?? { definitions: 0, references: 0 };
-  counts.set(key, count);
-  return count;
 }
 
 function emptyGraphCounts(): { nodes: number; edges: number } {

@@ -11,6 +11,10 @@ export interface RunScipTypescriptInput {
   repoPath: string;
   outputPath: string;
   inferTsconfig: boolean;
+  projectPaths?: string[];
+  includedFiles?: string[];
+  maxOldSpaceSizeMb?: number;
+  disableGlobalCaches?: boolean;
   timeoutMs?: number;
   maxOutputBytes?: number;
   maxScipBytes?: number;
@@ -32,14 +36,20 @@ export async function runScipTypescript(
 ): Promise<RunScipTypescriptResult> {
   await mkdir(dirname(input.outputPath), { recursive: true });
   const preparedProject = await prepareScipProject(input);
-  const args = [
+  const scipArgs = [
     "index",
     "--cwd",
     input.repoPath,
     "--output",
     input.outputPath,
     "--no-progress-bar",
-    ...preparedProject.projects,
+    ...((input.disableGlobalCaches ?? true) ? ["--no-global-caches"] : []),
+    ...(preparedProject.project ? [preparedProject.project] : []),
+  ];
+  const args = [
+    `--max-old-space-size=${input.maxOldSpaceSizeMb ?? 1024}`,
+    resolveScipTypescriptBin(),
+    ...scipArgs,
   ];
 
   return new Promise((resolvePromise, rejectPromise) => {
@@ -47,7 +57,7 @@ export async function runScipTypescript(
     const timeoutMs = input.timeoutMs ?? 120_000;
     const maxOutputBytes = input.maxOutputBytes ?? 128_000;
     const maxScipBytes = input.maxScipBytes ?? 128_000_000;
-    const child = spawn(resolveScipTypescriptBin(), args, {
+    const child = spawn(process.execPath, args, {
       cwd: input.repoPath,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -115,41 +125,149 @@ export async function runScipTypescript(
 }
 
 interface PreparedScipProject {
-  projects: string[];
+  project?: string;
   cleanup(): Promise<void>;
 }
 
 async function prepareScipProject(input: RunScipTypescriptInput): Promise<PreparedScipProject> {
-  if (!input.inferTsconfig || await pathExists(join(input.repoPath, "tsconfig.json"))) {
-    return { projects: [], cleanup: async () => {} };
+  const projectPaths = [...new Set(input.projectPaths ?? [])].filter((projectPath) => projectPath.length > 0).sort();
+  if (projectPaths.length > 1) {
+    throw new Error("runScipTypescript executes one SCIP project shard; call it once per shard");
+  }
+  const repoConfigPath = await existingProjectConfigPath(input.repoPath);
+  let scratchRoot: string | undefined;
+  const ensureScratchRoot = async () => {
+    scratchRoot ??= await mkdtemp(join(dirname(input.outputPath), "scip-infer-"));
+    return scratchRoot;
+  };
+
+  if (projectPaths.length > 0) {
+    return {
+      project: await preparedProjectPath({
+        projectPath: projectPaths[0]!,
+        inferTsconfig: input.inferTsconfig,
+        includedFiles: input.includedFiles,
+        ensureScratchRoot,
+        baseConfigPath: repoConfigPath,
+      }),
+      cleanup: () => scratchRoot ? rm(scratchRoot, { recursive: true, force: true }) : Promise.resolve(),
+    };
   }
 
-  const scratchRoot = await mkdtemp(join(dirname(input.outputPath), "scip-infer-"));
-  const configPath = join(scratchRoot, "tsconfig.json");
+  if (input.includedFiles && input.includedFiles.length > 0) {
+    const configPath = join(await ensureScratchRoot(), "tsconfig.json");
+    const inferredConfig = await inferredTsconfig(input.repoPath, repoConfigPath, input.includedFiles);
+    await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
+    return {
+      project: configPath,
+      cleanup: () => scratchRoot ? rm(scratchRoot, { recursive: true, force: true }) : Promise.resolve(),
+    };
+  }
+
+  if (repoConfigPath) {
+    return { project: repoConfigPath, cleanup: async () => {} };
+  }
+  if (!input.inferTsconfig) {
+    return { cleanup: async () => {} };
+  }
+
   const inferredConfig = await inferredTsconfig(input.repoPath);
+  const configPath = join(await ensureScratchRoot(), "tsconfig.json");
   await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
   return {
-    projects: [configPath],
-    cleanup: () => rm(scratchRoot, { recursive: true, force: true }),
+    project: configPath,
+    cleanup: () => scratchRoot ? rm(scratchRoot, { recursive: true, force: true }) : Promise.resolve(),
   };
 }
 
-async function inferredTsconfig(repoPath: string): Promise<Record<string, unknown>> {
+async function preparedProjectPath(input: {
+  projectPath: string;
+  inferTsconfig: boolean;
+  includedFiles: string[] | undefined;
+  ensureScratchRoot: () => Promise<string>;
+  baseConfigPath: string | undefined;
+}): Promise<string> {
+  if (input.includedFiles && input.includedFiles.length > 0) {
+    const projectRoot = await projectRootPath(input.projectPath);
+    const scratchRoot = await input.ensureScratchRoot();
+    const configPath = join(scratchRoot, safeProjectConfigName(projectRoot));
+    const projectConfigPath = await existingProjectConfigPath(input.projectPath);
+    const inferredConfig = await inferredTsconfig(projectRoot, projectConfigPath ?? input.baseConfigPath, input.includedFiles);
+    await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
+    return configPath;
+  }
+
+  const projectPath = input.projectPath;
+  const existingConfig = await existingProjectConfigPath(projectPath);
+  if (existingConfig) {
+    return existingConfig;
+  }
+  if (!input.inferTsconfig) {
+    return projectPath;
+  }
+  const projectRoot = await projectRootPath(projectPath);
+  const scratchRoot = await input.ensureScratchRoot();
+  const configPath = join(scratchRoot, safeProjectConfigName(projectRoot));
+  const inferredConfig = await inferredTsconfig(projectRoot, input.baseConfigPath);
+  await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
+  return configPath;
+}
+
+async function existingProjectConfigPath(projectPath: string): Promise<string | undefined> {
+  const projectStats = await pathStat(projectPath);
+  if (projectStats?.isFile()) {
+    return projectPath;
+  }
+  if (!projectStats?.isDirectory()) {
+    return undefined;
+  }
+  for (const configName of ["tsconfig.json", "jsconfig.json"]) {
+    const configPath = join(projectPath, configName);
+    if (await pathExists(configPath)) {
+      return configPath;
+    }
+  }
+  return undefined;
+}
+
+async function projectRootPath(projectPath: string): Promise<string> {
+  const projectStats = await pathStat(projectPath);
+  return projectStats?.isFile() ? dirname(projectPath) : projectPath;
+}
+
+function safeProjectConfigName(projectRoot: string): string {
+  return `${projectRoot.replace(/[^A-Za-z0-9_.-]/g, "_")}.tsconfig.json`;
+}
+
+async function inferredTsconfig(
+  repoPath: string,
+  baseConfigPath?: string,
+  includedFiles?: string[],
+): Promise<Record<string, unknown>> {
   const allowJs = await shouldAllowJs(repoPath);
-  const include = [
-    ...absoluteGlobs(repoPath, ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"]),
-    ...(allowJs ? absoluteGlobs(repoPath, ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]) : []),
-  ];
+  const uniqueIncludedFiles = [...new Set(includedFiles ?? [])].sort();
+  const include = uniqueIncludedFiles.length > 0
+    ? undefined
+    : [
+      ...absoluteGlobs(repoPath, ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"]),
+      ...(allowJs ? absoluteGlobs(repoPath, ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]) : []),
+    ];
   const compilerOptions: Record<string, unknown> = allowJs ? { allowJs: true, checkJs: false } : {};
   return {
+    ...(baseConfigPath ? { extends: baseConfigPath } : {}),
     compilerOptions,
-    include,
+    ...(uniqueIncludedFiles.length > 0 ? { files: uniqueIncludedFiles } : { include }),
     exclude: absoluteGlobs(repoPath, [
       "node_modules/**",
       "bower_components/**",
       "jspm_packages/**",
       ".git/**",
+      ".next/**",
+      ".turbo/**",
+      ".yarn/**",
+      "__generated__/**",
       "dist/**",
+      "generated/**",
       "out/**",
       "build/**",
       "coverage/**",
@@ -215,6 +333,14 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function pathStat(path: string) {
+  try {
+    return await stat(path);
+  } catch {
+    return undefined;
+  }
+}
+
 async function cleanupPreparedScipProject(project: PreparedScipProject): Promise<void> {
   try {
     await project.cleanup();
@@ -237,6 +363,11 @@ const ignoredInferenceDirectories = new Set([
   "out",
   "build",
   "coverage",
+  ".next",
+  ".turbo",
+  ".yarn",
+  "__generated__",
+  "generated",
 ]);
 
 const typescriptInferenceExtensions = [".ts", ".tsx", ".mts", ".cts"];

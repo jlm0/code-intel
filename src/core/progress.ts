@@ -67,6 +67,7 @@ interface GetIndexProgressOptions extends ReadIndexProgressOptions {
 
 interface ReadIndexWriteLockOptions {
   now?: Date;
+  staleAfterMs?: number;
   isPidAlive?: (pid: number) => boolean;
 }
 
@@ -74,6 +75,7 @@ const progressDirectoryName = "progress";
 const progressCurrentFilename = "current.json";
 const progressLogsDirectoryName = "logs";
 const defaultStaleAfterMs = 5 * 60 * 1000;
+const defaultWriteLockStaleAfterMs = 12 * 60 * 60 * 1000;
 const maxErrorStackBytes = 4096;
 const maxRecentEvents = 500;
 
@@ -132,7 +134,7 @@ export async function readIndexProgress(
   const updatedAt = Date.parse(snapshot.updatedAt);
   const now = options.now ?? new Date();
   const staleAfterMs = options.staleAfterMs ?? defaultStaleAfterMs;
-  if (Number.isFinite(updatedAt) && now.getTime() - updatedAt > staleAfterMs) {
+  if (Number.isFinite(updatedAt) && !snapshot.currentStep && now.getTime() - updatedAt > staleAfterMs) {
     return {
       ...snapshot,
       status: "stale",
@@ -140,7 +142,10 @@ export async function readIndexProgress(
     };
   }
 
-  return snapshot;
+  return {
+    ...snapshot,
+    staleReason: undefined,
+  };
 }
 
 export async function writeIndexProgress(indexPath: string, snapshot: IndexProgressSnapshot): Promise<void> {
@@ -205,12 +210,15 @@ export async function readIndexWriteLockState(
   const alive = pid === undefined ? false : (options.isPidAlive ?? processIsAlive)(pid);
   const createdAtMs = createdAt ? Date.parse(createdAt) : Number.NaN;
   const now = options.now ?? new Date();
+  const staleAfterMs = options.staleAfterMs ?? defaultWriteLockStaleAfterMs;
+  const ageMs = Number.isFinite(createdAtMs) ? Math.max(0, now.getTime() - createdAtMs) : undefined;
+  const fresh = ageMs === undefined || ageMs <= staleAfterMs;
   return IndexWriteLockStateSchema.parse({
-    status: alive ? "held" : "stale",
+    status: alive && fresh ? "held" : "stale",
     path: lockPath,
     pid,
     createdAt,
-    ageMs: Number.isFinite(createdAtMs) ? Math.max(0, now.getTime() - createdAtMs) : undefined,
+    ageMs,
     alive,
   });
 }

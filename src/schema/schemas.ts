@@ -139,6 +139,7 @@ export const IndexProgressEventTypeSchema = z.enum([
   "phase_started",
   "discovery_summary",
   "step_started",
+  "step_progress",
   "step_succeeded",
   "step_failed",
   "scip_quality",
@@ -281,6 +282,10 @@ export const IndexProgressEventSchema = z.discriminatedUnion("event", [
   }),
   IndexProgressEventBaseSchema.extend({
     event: z.literal("step_started"),
+    currentStep: IndexProgressStepSchema,
+  }),
+  IndexProgressEventBaseSchema.extend({
+    event: z.literal("step_progress"),
     currentStep: IndexProgressStepSchema,
   }),
   IndexProgressEventBaseSchema.extend({

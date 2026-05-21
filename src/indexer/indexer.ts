@@ -15,15 +15,15 @@ import {
   type IndexManifest,
   type IndexProgressStep,
 } from "../schema/schemas.js";
-import { scipFactsSchemaVersion, writeScipFacts, type RepoScipFacts } from "../scip/fact-cache.js";
-import { ingestScipIndex } from "../scip/ingest.js";
+import { writeScipFactsFromRepoFiles, type RepoScipFacts } from "../scip/fact-cache.js";
+import { ingestScipIndex, mergeScipFacts, type ScipFacts } from "../scip/ingest.js";
 import { createScipQualityReport } from "../scip/quality.js";
 import { runScipTypescript } from "../scip/runner.js";
 import {
   createEmbeddingProvider,
   type EmbeddingProvider,
 } from "../vectors/embedding.js";
-import { discoverWorkspace, type DiscoveredFile } from "../workspace/discovery.js";
+import { discoverWorkspace, type DiscoveredFile, type DiscoveredRepo } from "../workspace/discovery.js";
 import { summarizeWorkspaceDiscovery } from "../workspace/discovery-summary.js";
 import { embedGraphChunks, type EmbeddableChunkNode } from "./chunk-embeddings.js";
 import { applyFrameworkGraphFacts } from "./framework-graph.js";
@@ -72,7 +72,16 @@ interface BuildIndexWorkspaceOptions {
   previousFacts?: IndexFacts;
 }
 
+interface ScipShardPlan {
+  id: string;
+  kind: "package" | "repo";
+  projectPath: string;
+  outputPath: string;
+  includedFiles?: string[];
+}
+
 const youngLockAgeMs = 30_000;
+const staleLockAgeMs = 12 * 60 * 60 * 1000;
 
 export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexManifest> {
   await mkdir(input.indexPath, { recursive: true });
@@ -180,7 +189,8 @@ async function buildIndexWorkspace(
     chunks: new Map(),
   };
   const health: IndexManifest["health"] = [];
-  const scipFactsByRepo: RepoScipFacts[] = [];
+  const scipRepoFactPaths: string[] = [];
+  const scipCountsByFile = new Map<string, { definitions: number; references: number }>();
   const resolvedFactsByRepo: RepoResolvedModuleFacts[] = [];
   const workspaceNode = addNode(graph, {
     id: createStableId({
@@ -388,50 +398,111 @@ async function buildIndexWorkspace(
       });
     }
 
-    await reportProgress(input.progress, {
-      phase: "scip",
-      event: "step_started",
-      currentRepo: repo.name,
-      currentStep: "scip-run",
-      message: `Running SCIP for ${repo.name}`,
-    });
-    const scipOutputPath = join(input.indexPath, "scip", `${repo.name}.scip`);
-    const scipRun = await runScipTypescript({
-      repoPath: repo.path,
-      outputPath: scipOutputPath,
-      inferTsconfig: true,
-    });
-    await reportProgress(input.progress, {
-      phase: "scip",
-      event: "step_succeeded",
-      currentRepo: repo.name,
-      currentStep: "scip-run",
-      message: `Finished SCIP for ${repo.name}`,
-      durationMs: scipRun.durationMs,
-    });
     let scipSymbolNodes = new Map<string, CodeNode>();
-    if (scipRun.ok) {
-      const facts = await withProgressStep(input.progress, {
-        phase: "scip",
-        currentRepo: repo.name,
-        currentStep: "scip-ingest",
-        message: `Ingesting SCIP for ${repo.name}`,
-      }, () => ingestScipIndex(scipOutputPath));
-      const scipQuality = createScipQualityReport(scipRun, facts);
+    const scipShards = planScipShardsForRepo(repo, input.indexPath);
+    const usableScipFacts: ScipFacts[] = [];
+    for (const shard of scipShards) {
       await reportProgress(input.progress, {
         phase: "scip",
-        event: "scip_quality",
+        event: "step_started",
         currentRepo: repo.name,
-        currentStep: "scip-quality",
-        message: `Recorded SCIP quality for ${repo.name}`,
-        scip: scipQuality,
-        warnings: scipQuality.warnings,
+        currentStep: "scip-run",
+        message: `Running SCIP for ${repo.name}:${shard.id}`,
       });
-      scipFactsByRepo.push({
-        name: repo.name,
-        outputPath: scipOutputPath,
-        ...facts,
+      const scipRun = await runScipTypescript({
+        repoPath: repo.path,
+        outputPath: shard.outputPath,
+        inferTsconfig: true,
+        projectPaths: [shard.projectPath],
+        includedFiles: shard.includedFiles,
       });
+      if (scipRun.ok) {
+        await reportProgress(input.progress, {
+          phase: "scip",
+          event: "step_succeeded",
+          currentRepo: repo.name,
+          currentStep: "scip-run",
+          message: `Finished SCIP for ${repo.name}:${shard.id}`,
+          durationMs: scipRun.durationMs,
+        });
+        const facts = await withProgressStep(input.progress, {
+          phase: "scip",
+          currentRepo: repo.name,
+          currentStep: "scip-ingest",
+          message: `Ingesting SCIP for ${repo.name}:${shard.id}`,
+        }, () => ingestScipIndex(shard.outputPath));
+        const scipQuality = createScipQualityReport(scipRun, facts);
+        await reportProgress(input.progress, {
+          phase: "scip",
+          event: "scip_quality",
+          currentRepo: repo.name,
+          currentStep: "scip-quality",
+          message: `Recorded SCIP quality for ${repo.name}:${shard.id}`,
+          scip: scipQuality,
+          warnings: scipQuality.warnings,
+        });
+        const shardScipFacts: RepoScipFacts = {
+          name: repo.name,
+          outputPath: shard.outputPath,
+          shardId: shard.id,
+          shardKind: shard.kind,
+          projectPath: shard.projectPath,
+          ...facts,
+        };
+        const useTreeSitterFallback = scipQuality.warnings.includes("scip-empty-or-tiny");
+        if (useTreeSitterFallback) {
+          health.push({
+            name: `scip:${repo.name}:${shard.id}`,
+            status: "warn",
+            message: "SCIP shard output was empty or tiny",
+            details: { outputPath: shard.outputPath, projectPath: shard.projectPath, shardKind: shard.kind, ...scipQuality },
+          });
+          continue;
+        }
+        usableScipFacts.push(facts);
+        scipRepoFactPaths.push(await writeScipShardFacts(input.indexPath, shardScipFacts));
+        health.push({
+          name: `scip:${repo.name}:${shard.id}`,
+          status: scipQuality.warnings.length > 0 ? "warn" : "pass",
+          message: scipQuality.warnings.length > 0
+            ? `SCIP shard quality warnings: ${scipQuality.warnings.join(", ")}`
+            : `SCIP shard indexed ${facts.definitions.length} definitions, ${facts.references.length} references, and ${facts.occurrences.length} occurrences`,
+          details: { outputPath: shard.outputPath, projectPath: shard.projectPath, shardKind: shard.kind, ...scipQuality },
+        });
+      } else {
+        const scipQuality = createScipQualityReport(scipRun, {
+          definitions: [],
+          references: [],
+          occurrences: [],
+        });
+        await reportProgress(input.progress, {
+          phase: "scip",
+          event: "warning",
+          currentRepo: repo.name,
+          currentStep: "scip-run",
+          message: `SCIP failed for ${repo.name}:${shard.id}`,
+          scip: scipQuality,
+          warnings: scipQuality.warnings,
+        });
+        health.push({
+          name: `scip:${repo.name}:${shard.id}`,
+          status: "warn",
+          message: "SCIP shard indexing failed",
+          details: {
+            outputPath: shard.outputPath,
+            projectPath: shard.projectPath,
+            shardKind: shard.kind,
+            exitCode: scipRun.exitCode,
+            stderr: scipRun.stderr,
+          },
+        });
+        continue;
+      }
+    }
+
+    if (usableScipFacts.length > 0) {
+      const facts = mergeScipFacts(usableScipFacts);
+      recordScipCounts(scipCountsByFile, repo.name, facts);
       const fusion = applyScipGraphFacts({
         facts,
         workspaceName: workspace.workspaceName,
@@ -447,27 +518,14 @@ async function buildIndexWorkspace(
       scipSymbolNodes = fusion.scipSymbolNodes;
       health.push({
         name: `scip:${repo.name}`,
-        status: scipQuality.warnings.length > 0 ? "warn" : "pass",
-        message: scipQuality.warnings.length > 0
-          ? `SCIP quality warnings: ${scipQuality.warnings.join(", ")}`
-          : `SCIP indexed ${facts.definitions.length} definitions, ${facts.references.length} references, and ${facts.occurrences.length} occurrences`,
-        details: { outputPath: scipOutputPath, ...scipQuality },
+        status: "pass",
+        message: `SCIP indexed ${facts.definitions.length} definitions, ${facts.references.length} references, and ${facts.occurrences.length} occurrences across ${usableScipFacts.length} shard(s)`,
+        details: {
+          shards: scipShards.length,
+          usableShards: usableScipFacts.length,
+        },
       });
     } else {
-      const scipQuality = createScipQualityReport(scipRun, {
-        definitions: [],
-        references: [],
-        occurrences: [],
-      });
-      await reportProgress(input.progress, {
-        phase: "scip",
-        event: "warning",
-        currentRepo: repo.name,
-        currentStep: "scip-run",
-        message: `SCIP failed for ${repo.name}; using Tree-sitter fallback`,
-        scip: scipQuality,
-        warnings: scipQuality.warnings,
-      });
       health.push(
         ...addTreeSitterFallbackRelationships({
           graph,
@@ -483,11 +541,9 @@ async function buildIndexWorkspace(
       health.push({
         name: `scip:${repo.name}`,
         status: "warn",
-        message: "SCIP indexing failed; Tree-sitter fallback graph was still written",
+        message: "No usable SCIP shard output; Tree-sitter fallback graph was written",
         details: {
-          outputPath: scipOutputPath,
-          exitCode: scipRun.exitCode,
-          stderr: scipRun.stderr,
+          shards: scipShards.length,
         },
       });
     }
@@ -647,9 +703,9 @@ async function buildIndexWorkspace(
   });
   const store = new LadybugGraphStore(input.indexPath);
   const generation = await store.rebuild({
-    nodes: [...graph.nodes.values()],
-    edges: [...graph.edges.values()],
-    chunks: [...graph.chunks.values()],
+    nodes: graph.nodes,
+    edges: graph.edges,
+    chunksById: graph.chunks,
     embeddingDimension: embeddingProvider.dimension,
   });
   await reportProgress(input.progress, {
@@ -664,12 +720,10 @@ async function buildIndexWorkspace(
   await writeJsonAtomically(join(generation.generationPath, "manifest.json"), manifest);
   await writeJsonAtomically(join(generation.generationPath, "workspace.json"), workspace);
   await writeIndexFacts(generation.generationPath, facts);
-  await writeScipFacts(generation.generationPath, {
-    schemaVersion,
-    factsSchemaVersion: scipFactsSchemaVersion,
+  await writeScipFactsFromRepoFiles(generation.generationPath, {
     workspace: workspace.workspaceName,
     generatedAt,
-    repos: scipFactsByRepo,
+    repoFactPaths: scipRepoFactPaths,
   });
   await writeResolvedModuleFacts(generation.generationPath, {
     schemaVersion,
@@ -684,7 +738,7 @@ async function buildIndexWorkspace(
       workspace,
       generatedAt,
       fileFactsByKey: fileFactPlan.fileFactsByKey,
-      scipFactsByRepo,
+      scipCountsByFile,
       nodes: graph.nodes.values(),
       edges: graph.edges.values(),
     }),
@@ -762,6 +816,100 @@ async function withProgressStep<T>(
     });
     throw error;
   }
+}
+
+function planScipShardsForRepo(repo: DiscoveredRepo, indexPath: string): ScipShardPlan[] {
+  const packagesBySpecificity = [...repo.packages].sort((left, right) => right.path.length - left.path.length);
+  const filesByPackagePath = new Map(repo.packages.map((pkg) => [pkg.path, [] as string[]]));
+  const outsidePackageFiles: string[] = [];
+  for (const file of repo.files) {
+    const owningPackage = packagesBySpecificity.find((pkg) => pathStartsWith(file.absolutePath, pkg.path));
+    if (owningPackage) {
+      filesByPackagePath.get(owningPackage.path)?.push(file.absolutePath);
+    } else {
+      outsidePackageFiles.push(file.absolutePath);
+    }
+  }
+
+  const shards: ScipShardPlan[] = repo.packages.map((pkg) => {
+    const id = `package-${pkg.relativePath === "." ? pkg.name : pkg.relativePath}`;
+    const includedFiles = filesByPackagePath.get(pkg.path)?.sort() ?? [];
+    return {
+      id,
+      kind: "package",
+      projectPath: pkg.path,
+      outputPath: scipShardOutputPath(indexPath, repo.name, id),
+      ...(includedFiles.length > 0 ? { includedFiles } : {}),
+    };
+  });
+  if (outsidePackageFiles.length > 0) {
+    const id = "repo-root";
+    shards.push({
+      id,
+      kind: "repo",
+      projectPath: repo.path,
+      outputPath: scipShardOutputPath(indexPath, repo.name, id),
+      includedFiles: outsidePackageFiles.sort(),
+    });
+  }
+  if (shards.length === 0) {
+    const id = "repo";
+    shards.push({
+      id,
+      kind: "repo",
+      projectPath: repo.path,
+      outputPath: scipShardOutputPath(indexPath, repo.name, id),
+    });
+  }
+  return shards.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function pathStartsWith(filePath: string, directoryPath: string): boolean {
+  const normalizedDirectory = directoryPath.replace(/\/$/, "");
+  return filePath === normalizedDirectory || filePath.startsWith(`${normalizedDirectory}/`);
+}
+
+function scipShardOutputPath(indexPath: string, repoName: string, shardId: string): string {
+  return join(indexPath, "scip", safePathSegment(repoName), `${safePathSegment(shardId)}.scip`);
+}
+
+async function writeScipShardFacts(indexPath: string, facts: RepoScipFacts): Promise<string> {
+  const shardSegment = safePathSegment(facts.shardId ?? "repo");
+  const factsDirectory = join(indexPath, "scip", "facts", safePathSegment(facts.name));
+  await mkdir(factsDirectory, { recursive: true });
+  const factsPath = join(factsDirectory, `${shardSegment}.json`);
+  await writeJsonAtomically(factsPath, facts);
+  return factsPath;
+}
+
+function recordScipCounts(
+  counts: Map<string, { definitions: number; references: number }>,
+  repoName: string,
+  facts: ScipFacts,
+): void {
+  for (const definition of facts.definitions) {
+    const count = scipCount(counts, repoName, definition.relativePath);
+    count.definitions += 1;
+  }
+  for (const reference of facts.references) {
+    const count = scipCount(counts, repoName, reference.relativePath);
+    count.references += 1;
+  }
+}
+
+function scipCount(
+  counts: Map<string, { definitions: number; references: number }>,
+  repo: string,
+  relativePath: string,
+): { definitions: number; references: number } {
+  const key = fingerprintKey({ repo, relativePath });
+  const count = counts.get(key) ?? { definitions: 0, references: 0 };
+  counts.set(key, count);
+  return count;
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]/g, "_");
 }
 
 function addAstBoundaryNodes(
@@ -1253,14 +1401,6 @@ function ownerFileMetadata(repo: string, file: string, origin: string): Record<s
   };
 }
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-  return chunks;
-}
-
 function fileKindForPath(relativePath: string): string {
   return /(^|\/)(__tests__|tests?)\//.test(relativePath) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relativePath)
     ? "test"
@@ -1304,8 +1444,11 @@ async function recoverStaleLock(lockPath: string): Promise<void> {
   try {
     const owner = JSON.parse(await readFile(join(lockPath, "owner.json"), "utf8")) as {
       pid?: unknown;
+      createdAt?: unknown;
     };
-    if (typeof owner.pid === "number" && processIsAlive(owner.pid)) {
+    const createdAt = typeof owner.createdAt === "string" ? Date.parse(owner.createdAt) : Number.NaN;
+    const fresh = Number.isFinite(createdAt) ? Date.now() - createdAt <= staleLockAgeMs : true;
+    if (typeof owner.pid === "number" && fresh && processIsAlive(owner.pid)) {
       return;
     }
   } catch {
@@ -1329,7 +1472,10 @@ function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EPERM") {
+      return true;
+    }
     return false;
   }
 }

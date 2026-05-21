@@ -41,7 +41,6 @@ export function applyRelationshipGraphFacts(input: ApplyRelationshipGraphFactsIn
   applyFrameworkConventionRelationships(input);
   applyApiClientRelationships(input);
   applyTransitiveCallRelationshipEdges(input);
-  promoteCallEvidenceEdges(input);
 }
 
 function applyTypeReferenceEdges(input: ApplyRelationshipGraphFactsInput): void {
@@ -111,6 +110,7 @@ function importedSymbolTarget(
 ): CodeNode | undefined {
   const targetSymbolIds = [...input.edges.values()]
     .filter((edge) =>
+      edgeBelongsToCurrentRepo(edge, input.repo.name) &&
       (edge.kind === "IMPORTS" || edge.kind === "REFERENCES") &&
       edge.metadata.ownerFile === relativePath &&
       edge.metadata.moduleSpecifier === importFact.moduleSpecifier &&
@@ -388,9 +388,21 @@ function applyDiscriminatedUnionRelationships(input: ApplyRelationshipGraphFacts
 }
 
 function applyTransitiveCallRelationshipEdges(input: ApplyRelationshipGraphFactsInput): void {
-  const directCallEdges = [...input.edges.values()].filter((edge) => edge.kind === "CALLS");
+  const directCallEdges = dedupeDirectCallEdges(
+    [...input.edges.values()].filter((edge) =>
+      edge.kind === "CALLS" &&
+      edgeBelongsToCurrentRepo(edge, input.repo.name) &&
+      !metadataArrayIncludes(edge.metadata.evidenceSources, "transitive-call") &&
+      !metadataArrayIncludes(edge.metadata.relationshipTags, "transitive-call")
+    ),
+  );
   const outgoingCalls = new Map<string, CodeEdge[]>();
   for (const edge of directCallEdges) {
+    const sourceNode = input.nodes.get(edge.fromId);
+    const targetNode = input.nodes.get(edge.toId);
+    if (sourceNode?.repo !== input.repo.name || targetNode?.repo !== input.repo.name) {
+      continue;
+    }
     const edges = outgoingCalls.get(edge.fromId) ?? [];
     edges.push(edge);
     outgoingCalls.set(edge.fromId, edges);
@@ -403,48 +415,17 @@ function applyTransitiveCallRelationshipEdges(input: ApplyRelationshipGraphFacts
     }
     for (const secondHop of outgoingCalls.get(firstHop.toId) ?? []) {
       const target = input.nodes.get(secondHop.toId);
-      if (!isCallableSource(target) || target.id === source.id || target.file === source.file && target.name === source.name) {
+      if (
+        !isCallableSource(target) ||
+        target.repo !== input.repo.name ||
+        target.id === source.id ||
+        target.file === source.file && target.name === source.name
+      ) {
         continue;
       }
       input.addEdge("CALLS", source.id, target.id, input.workspaceName, input.repo.name, transitiveCallMetadata(firstHop, secondHop));
     }
   }
-}
-
-function promoteCallEvidenceEdges(input: ApplyRelationshipGraphFactsInput): void {
-  const evidenceEdges = [...input.edges.values()].filter((edge) =>
-    (edge.kind === "REFERENCES" || edge.kind === "MENTIONS") &&
-    metadataArrayIncludes(edge.metadata.roles, "Call") &&
-    (metadataArrayIncludes(edge.metadata.evidenceSources, "tree-sitter-call") ||
-      metadataArrayIncludes(edge.metadata.evidenceSources, "tree-sitter-member-call"))
-  );
-  for (const edge of evidenceEdges) {
-    const fromNode = input.nodes.get(edge.fromId);
-    const sourceIds = callEvidenceSourceIds(fromNode);
-    for (const sourceId of sourceIds) {
-      if (sourceId === edge.toId) {
-        continue;
-      }
-      input.addEdge("CALLS", sourceId, edge.toId, input.workspaceName, input.repo.name, {
-        ...edge.metadata,
-        origin: "graph-call-evidence-promotion",
-        source: "graph-call-evidence-promotion",
-        evidenceSources: mergeStringArrays(edge.metadata.evidenceSources, "call-evidence-promotion"),
-      });
-    }
-  }
-}
-
-function callEvidenceSourceIds(node: CodeNode | undefined): string[] {
-  if (!node) {
-    return [];
-  }
-  const symbolId = stringFromMetadata(node.metadata, "symbolId");
-  const ids = [node.id];
-  if (symbolId && symbolId !== node.id) {
-    ids.push(symbolId);
-  }
-  return ids;
 }
 
 function applyEnvironmentConfigRelationships(input: ApplyRelationshipGraphFactsInput): void {
@@ -838,6 +819,31 @@ function isCallableSource(node: CodeNode | undefined): node is CodeNode {
     node.metadata.fileKind === "source" &&
     ["Function", "Class", "Symbol", "Chunk", "File"].includes(node.kind),
   );
+}
+
+function edgeBelongsToCurrentRepo(edge: CodeEdge, repoName: string): boolean {
+  return edge.repo === repoName || stringFromMetadata(edge.metadata, "ownerRepo") === repoName;
+}
+
+function dedupeDirectCallEdges(edges: CodeEdge[]): CodeEdge[] {
+  const deduped = new Map<string, CodeEdge>();
+  for (const edge of edges) {
+    const key = `${edge.fromId}\0${edge.toId}`;
+    const current = deduped.get(key);
+    if (!current || callEdgePriority(edge) < callEdgePriority(current)) {
+      deduped.set(key, edge);
+    }
+  }
+  return [...deduped.values()];
+}
+
+function callEdgePriority(edge: CodeEdge): number {
+  let priority = 0;
+  if (metadataArrayIncludes(edge.metadata.evidenceSources, "call-evidence-promotion")) priority += 20;
+  if (edge.id.includes(":evidence:")) priority += 10;
+  if (metadataArrayIncludes(edge.metadata.evidenceSources, "tree-sitter-member-call")) priority -= 2;
+  if (metadataArrayIncludes(edge.metadata.evidenceSources, "scip-typescript")) priority -= 3;
+  return priority;
 }
 
 function transitiveCallMetadata(firstHop: CodeEdge, secondHop: CodeEdge): Record<string, unknown> {

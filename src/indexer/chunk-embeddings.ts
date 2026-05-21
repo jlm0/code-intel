@@ -15,11 +15,11 @@ export async function embedGraphChunks(
   embeddingProvider: EmbeddingProvider,
   embeddingCache: Map<string, number[]>,
 ): Promise<{ embedded: number; reused: number }> {
-  const chunks = [...chunksById.values()].sort((left, right) => left.id.localeCompare(right.id));
   const missingInputs = new Map<string, { embeddingInputHash: string; input: string; chunks: EmbeddableChunkNode[] }>();
   let reused = 0;
+  let embedded = 0;
 
-  for (const chunk of chunks) {
+  for (const chunk of chunksById.values()) {
     const cachedEmbedding = chunk.embedding.length === embeddingProvider.dimension
       ? chunk.embedding
       : embeddingCache.get(chunk.embeddingInputHash);
@@ -38,32 +38,39 @@ export async function embedGraphChunks(
           chunks: [chunk],
         });
       }
+      if (missingInputs.size >= 16) {
+        embedded += await flushMissingInputs(missingInputs, embeddingProvider, embeddingCache);
+      }
     }
   }
 
-  let embedded = 0;
-  for (const batch of chunkArray([...missingInputs.values()], 16)) {
-    const embeddings = await embeddingProvider.embedBatch(
-      batch.map((entry) => entry.input),
-    );
-    batch.forEach((entry, index) => {
-      const embedding = embeddings[index] ?? [];
-      embeddingCache.set(entry.embeddingInputHash, embedding);
-      for (const chunk of entry.chunks) {
-        chunk.embedding = embedding;
-        chunk.fact.embedding = chunk.embedding;
-        embedded += 1;
-      }
-    });
-  }
+  embedded += await flushMissingInputs(missingInputs, embeddingProvider, embeddingCache);
 
   return { embedded, reused };
 }
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
+async function flushMissingInputs(
+  missingInputs: Map<string, { embeddingInputHash: string; input: string; chunks: EmbeddableChunkNode[] }>,
+  embeddingProvider: EmbeddingProvider,
+  embeddingCache: Map<string, number[]>,
+): Promise<number> {
+  if (missingInputs.size === 0) {
+    return 0;
   }
-  return chunks;
+  const batch = [...missingInputs.values()];
+  missingInputs.clear();
+  const embeddings = await embeddingProvider.embedBatch(
+    batch.map((entry) => entry.input),
+  );
+  let embedded = 0;
+  batch.forEach((entry, index) => {
+    const embedding = embeddings[index] ?? [];
+    embeddingCache.set(entry.embeddingInputHash, embedding);
+    for (const chunk of entry.chunks) {
+      chunk.embedding = embedding;
+      chunk.fact.embedding = chunk.embedding;
+      embedded += 1;
+    }
+  });
+  return embedded;
 }

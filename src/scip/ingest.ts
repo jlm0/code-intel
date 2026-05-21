@@ -85,6 +85,11 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
   const definitionBySymbol = new Map<string, ScipDefinition>();
   const symbolInfoBySymbol = new Map<string, SymbolInformation>();
 
+  for (const symbol of index.externalSymbols) {
+    const normalizedSymbol = normalizeScipSymbol("", symbol.symbol);
+    symbolInfoBySymbol.set(normalizedSymbol, symbol);
+  }
+
   for (const document of index.documents) {
     for (const symbol of document.symbols) {
       const name = extractSymbolName(symbol.documentation, symbol.symbol);
@@ -113,7 +118,6 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
   }
 
   const occurrences: ScipOccurrence[] = [];
-  const references: ScipReference[] = [];
   for (const document of index.documents) {
     for (const occurrence of document.occurrences) {
       if (!occurrence.symbol || isParameterSymbol(occurrence.symbol)) {
@@ -122,7 +126,9 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
       const normalizedSymbol = normalizeScipSymbol(document.relativePath, occurrence.symbol);
       const definition = definitionBySymbol.get(normalizedSymbol);
       const symbolInfo = symbolInfoBySymbol.get(normalizedSymbol);
-      const symbolName = definition?.name ?? extractSymbolName(symbolInfo?.documentation ?? [], occurrence.symbol);
+      const symbolName = definition?.name
+        ?? extractSymbolName(symbolInfo?.documentation ?? [], occurrence.symbol)
+        ?? extractSymbolName([], occurrence.symbol);
       if (!symbolName) {
         continue;
       }
@@ -135,30 +141,45 @@ export async function ingestScipIndex(outputPath: string): Promise<ScipFacts> {
         relativePath: document.relativePath,
       });
       occurrences.push(normalizedOccurrence);
-      if (normalizedOccurrence.isDefinition) {
-        continue;
-      }
-      if (!definition) {
-        continue;
-      }
-      references.push({
-        symbol: normalizedSymbol,
-        symbolName: definition.name,
-        symbolKind: definition.kind,
-        relativePath: document.relativePath,
-        range: convertRange(occurrence.range),
-        enclosingRange: occurrence.enclosingRange.length
-          ? convertRange(occurrence.enclosingRange)
-          : undefined,
-        roles: normalizedOccurrence.roles,
-        isImport: normalizedOccurrence.isImport,
-        isWriteAccess: normalizedOccurrence.isWriteAccess,
-        isReadAccess: normalizedOccurrence.isReadAccess,
-        isTest: normalizedOccurrence.isTest,
-      });
     }
   }
 
+  return {
+    definitions,
+    references: referencesFromOccurrences(occurrences, definitionBySymbol),
+    occurrences,
+  };
+}
+
+export function mergeScipFacts(shardFacts: ScipFacts[]): ScipFacts {
+  const definitionBySymbol = new Map<string, ScipDefinition>();
+  const occurrencesByKey = new Map<string, ScipOccurrence>();
+
+  for (const facts of shardFacts) {
+    for (const definition of facts.definitions) {
+      if (!definitionBySymbol.has(definition.symbol)) {
+        definitionBySymbol.set(definition.symbol, definition);
+      }
+    }
+    for (const occurrence of facts.occurrences) {
+      const key = [
+        occurrence.symbol,
+        occurrence.relativePath,
+        occurrence.range.startLine,
+        occurrence.range.startColumn,
+        occurrence.range.endLine,
+        occurrence.range.endColumn,
+        occurrence.roleMask,
+      ].join(":");
+      if (!occurrencesByKey.has(key)) {
+        occurrencesByKey.set(key, occurrence);
+      }
+    }
+  }
+
+  const definitions = [...definitionBySymbol.values()].sort(compareDefinitions);
+  const occurrences = [...occurrencesByKey.values()].sort(compareOccurrences);
+  const references = referencesFromOccurrences(occurrences, definitionBySymbol).sort(compareReferences);
   return { definitions, references, occurrences };
 }
 
@@ -190,6 +211,30 @@ function normalizeOccurrence(input: {
     isTest: hasRole(input.occurrence, SymbolRole.Test) || fileKindForPath(input.relativePath) === "test",
     isForwardDefinition: hasRole(input.occurrence, SymbolRole.ForwardDefinition),
   };
+}
+
+function referencesFromOccurrences(
+  occurrences: ScipOccurrence[],
+  definitionBySymbol: Map<string, ScipDefinition>,
+): ScipReference[] {
+  return occurrences
+    .filter((occurrence) => occurrence.isReference)
+    .map((occurrence) => {
+      const definition = definitionBySymbol.get(occurrence.symbol);
+      return {
+        symbol: occurrence.symbol,
+        symbolName: definition?.name ?? occurrence.symbolName,
+        symbolKind: definition?.kind ?? occurrence.symbolKind,
+        relativePath: occurrence.relativePath,
+        range: occurrence.range,
+        enclosingRange: occurrence.enclosingRange,
+        roles: occurrence.roles,
+        isImport: occurrence.isImport,
+        isWriteAccess: occurrence.isWriteAccess,
+        isReadAccess: occurrence.isReadAccess,
+        isTest: occurrence.isTest,
+      };
+    });
 }
 
 function normalizeScipSymbol(relativePath: string, symbol: string): string {
@@ -270,4 +315,26 @@ function fileKindForPath(relativePath: string): string {
   return /(^|\/)(__tests__|tests?)\//.test(relativePath) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(relativePath)
     ? "test"
     : "source";
+}
+
+function compareDefinitions(left: ScipDefinition, right: ScipDefinition): number {
+  return left.relativePath.localeCompare(right.relativePath) || left.name.localeCompare(right.name);
+}
+
+function compareOccurrences(left: ScipOccurrence, right: ScipOccurrence): number {
+  return (
+    left.relativePath.localeCompare(right.relativePath) ||
+    left.range.startLine - right.range.startLine ||
+    left.range.startColumn - right.range.startColumn ||
+    left.symbol.localeCompare(right.symbol)
+  );
+}
+
+function compareReferences(left: ScipReference, right: ScipReference): number {
+  return (
+    left.relativePath.localeCompare(right.relativePath) ||
+    left.range.startLine - right.range.startLine ||
+    left.range.startColumn - right.range.startColumn ||
+    left.symbol.localeCompare(right.symbol)
+  );
 }

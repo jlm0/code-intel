@@ -15,9 +15,9 @@ import type {
 } from "./repository.js";
 
 export interface GraphWriteInput {
-  nodes: CodeNode[];
-  edges: CodeEdge[];
-  chunks: Array<CodeNode & { content: string; embedding: number[] }>;
+  nodes: ReadonlyMap<string, CodeNode>;
+  edges: ReadonlyMap<string, CodeEdge>;
+  chunksById: ReadonlyMap<string, CodeNode & { content: string; embedding: number[] }>;
   embeddingDimension: number;
 }
 
@@ -49,6 +49,7 @@ export interface VectorSearchRow {
 const activeIndexFile = "current.json";
 const legacyDatabaseName = "code-intel.lbug";
 const youngLockAgeMs = 30_000;
+const staleLockAgeMs = 12 * 60 * 60 * 1000;
 const symbolKinds = ["Function", "Class", "Interface", "TypeAlias", "Symbol", "Test"];
 const findableSymbolKinds = [...symbolKinds, "Export"];
 const edgeKinds: CodeEdge["kind"][] = [
@@ -94,9 +95,8 @@ export class LadybugGraphStore implements CodeGraphRepository {
     await this.open();
     try {
       await this.createSchema(input.embeddingDimension);
-      const chunksById = new Map(input.chunks.map((chunk) => [chunk.id, chunk]));
-      await this.createNodes(input.nodes.map((node) => CodeNodeSchema.parse(node)), chunksById);
-      await this.createEdges(input.edges.map((edge) => CodeEdgeSchema.parse(edge)));
+      await this.createNodes(input.nodes.values(), input.chunksById);
+      await this.createEdges(input.edges.values());
       await this.createVectorIndex();
     } finally {
       await this.close();
@@ -410,27 +410,29 @@ export class LadybugGraphStore implements CodeGraphRepository {
   }
 
   private async createNodes(
-    nodes: CodeNode[],
-    chunksById: Map<string, CodeNode & { content: string; embedding: number[] }>,
+    nodes: Iterable<CodeNode>,
+    chunksById: ReadonlyMap<string, CodeNode & { content: string; embedding: number[] }>,
   ): Promise<void> {
-    for (const batch of chunkArray(nodes, 200)) {
+    for (const batch of batched(nodes, 200)) {
       await this.query(`
         CREATE ${batch
+          .map((node) => CodeNodeSchema.parse(node))
           .map((node) => `(:CodeNode ${cypherMap(nodeValues(node, chunksById.get(node.id)))})`)
           .join(", ")}
       `);
     }
   }
 
-  private async createEdges(edges: CodeEdge[]): Promise<void> {
-    for (const batch of chunkArray(edges, 100)) {
+  private async createEdges(edges: Iterable<CodeEdge>): Promise<void> {
+    for (const batch of batched(edges, 100)) {
+      const parsedBatch = batch.map((edge) => CodeEdgeSchema.parse(edge));
       const matches = batch
         .map(
           (edge, index) =>
             `(from${index}:CodeNode {id: ${cypherValue(edge.fromId)}}), (to${index}:CodeNode {id: ${cypherValue(edge.toId)}})`,
         )
         .join(", ");
-      const creates = batch
+      const creates = parsedBatch
         .flatMap((edge, index) => {
           const properties = {
             id: edge.id,
@@ -676,8 +678,11 @@ async function recoverStaleProcessLock(lockPath: string): Promise<void> {
   try {
     const owner = JSON.parse(await readFile(join(lockPath, "owner.json"), "utf8")) as {
       pid?: unknown;
+      createdAt?: unknown;
     };
-    if (typeof owner.pid === "number" && processIsAlive(owner.pid)) {
+    const createdAt = typeof owner.createdAt === "string" ? Date.parse(owner.createdAt) : Number.NaN;
+    const fresh = Number.isFinite(createdAt) ? Date.now() - createdAt <= staleLockAgeMs : true;
+    if (typeof owner.pid === "number" && fresh && processIsAlive(owner.pid)) {
       return;
     }
   } catch {
@@ -701,20 +706,21 @@ function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EPERM") {
+      return true;
+    }
     return false;
   }
 }
 
 function assertNoDanglingEdges(input: GraphWriteInput): void {
-  const nodeIds = new Set(input.nodes.map((node) => node.id));
-  const danglingEdge = input.edges.find(
-    (edge) => !nodeIds.has(edge.fromId) || !nodeIds.has(edge.toId),
-  );
-  if (danglingEdge) {
-    throw new Error(
-      `Dangling edge ${danglingEdge.id} references ${danglingEdge.fromId} -> ${danglingEdge.toId}`,
-    );
+  for (const edge of input.edges.values()) {
+    if (!input.nodes.has(edge.fromId) || !input.nodes.has(edge.toId)) {
+      throw new Error(
+        `Dangling edge ${edge.id} references ${edge.fromId} -> ${edge.toId}`,
+      );
+    }
   }
 }
 
@@ -923,12 +929,18 @@ function cypherMap(values: Record<string, unknown>): string {
     .join(", ")}}`;
 }
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
+function* batched<T>(items: Iterable<T>, size: number): Iterable<T[]> {
+  let batch: T[] = [];
+  for (const item of items) {
+    batch.push(item);
+    if (batch.length >= size) {
+      yield batch;
+      batch = [];
+    }
   }
-  return chunks;
+  if (batch.length > 0) {
+    yield batch;
+  }
 }
 
 function mergeRelatedRows(

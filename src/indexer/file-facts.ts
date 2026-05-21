@@ -116,8 +116,10 @@ export async function prepareFileFacts(input: {
 async function fingerprintWorkspaceFiles(workspace: DiscoveredWorkspace): Promise<Map<string, FingerprintedFile>> {
   const files = new Map<string, FingerprintedFile>();
   for (const repo of workspace.repos) {
-    const fingerprintedFiles = await Promise.all(
-      repo.files.map((file) => fingerprintDiscoveredFile(repo, file)),
+    const fingerprintedFiles = await mapWithConcurrency(
+      repo.files,
+      16,
+      (file) => fingerprintDiscoveredFile(repo, file),
     );
     for (const file of fingerprintedFiles) {
       files.set(fingerprintKey(file.fingerprint), file);
@@ -150,4 +152,24 @@ function cloneChunkFact(chunk: ChunkFact): ChunkFact {
 
 function cloneFacts<T>(facts: T[]): T[] {
   return facts.map((fact) => JSON.parse(JSON.stringify(fact)) as T);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await worker(items[currentIndex]!);
+      }
+    }),
+  );
+  return results;
 }
