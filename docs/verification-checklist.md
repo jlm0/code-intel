@@ -1138,3 +1138,16 @@ Implementation evidence:
 - [x] Default graph-store publish benchmark scale was 10,000 nodes, 100,000 edges, and 2,000 chunks; output reported schema 67 ms, node writes 3,763 ms, edge writes 163,422 ms, vector index 1,260 ms, close/checkpoint 1,006 ms, publish 2 ms, total 170,683 ms, and peak RSS 78 MB.
 - [x] Diff whitespace verification passed: `git diff --check`.
 - [x] Package dry run passed: `npm pack --dry-run` produced package metadata for 376 files, 325.9 kB package size, and no root `code-intel-*.tgz` artifact remained afterward.
+
+## 2026-05-22 09:29 CDT: Local 0.5.0 Release
+
+- [x] Committed the active generation-publish reliability work before the release bump as `01cc9a2 feat: improve generation publish reliability`.
+- [x] Version bump applied with `npm run version:bump -- 0.5.0`, updating `package.json` and `package-lock.json`.
+- [x] Local release tests passed through `npm run release:local`: `npm test` returned 40 files passed and 185 tests passed.
+- [x] Local release pack passed through `npm run release:local`: `npm pack --pack-destination .local-releases/v0.5.0` produced `code-intel-0.5.0.tgz` with 376 files and 325.9 kB package size.
+- [x] Global install verification passed through `npm run release:local`, which installed `.local-releases/v0.5.0/code-intel-0.5.0.tgz`.
+- [x] Installed package verification passed: `npm list -g code-intel --depth=0` reports `code-intel@0.5.0`.
+- [x] Installed CLI verification passed: `code-intel --version` and explicit Node launch of the installed CLI both returned `0.5.0`.
+- [x] Installed MCP metadata verification passed by launching the configured global CLI entrypoint with an SDK stdio client; `client.getServerVersion()` returned `{"name":"code-intel","version":"0.5.0"}`.
+- [x] Diff whitespace verification passed: `git diff --check`.
+- [x] Package artifact check passed: no root `code-intel-*.tgz` artifact was left behind.
