@@ -3,7 +3,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { normalizeRelativePath } from "../core/ids.js";
-import { directoryIsIgnored } from "./ignore.js";
+import { directoryIsIgnored, type IgnorePolicyOptions } from "./ignore.js";
 
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 
@@ -11,6 +11,7 @@ export interface DiscoverWorkspaceInput {
   workspaceRoot: string;
   repoPaths: string[];
   includeIgnored?: boolean;
+  allowedHiddenDirectories?: string[];
   workspaceManifestPath?: string;
 }
 
@@ -68,13 +69,19 @@ export async function discoverWorkspace(input: DiscoverWorkspaceInput): Promise<
   const workspaceRoot = resolve(input.workspaceRoot);
   const rootPackage = await readPackageJson(workspaceRoot);
   const workspaceName = rootPackage?.name ?? basename(workspaceRoot);
-  const manifestRepoPaths = await readWorkspaceManifest(workspaceRoot, input.workspaceManifestPath);
+  const manifest = await readWorkspaceManifest(workspaceRoot, input.workspaceManifestPath);
   const repoPaths =
-    input.repoPaths.length > 0 ? input.repoPaths : manifestRepoPaths.length > 0 ? manifestRepoPaths : [workspaceRoot];
+    input.repoPaths.length > 0 ? input.repoPaths : manifest.repoPaths.length > 0 ? manifest.repoPaths : [workspaceRoot];
+  const allowedHiddenDirectories = [
+    ...manifest.allowedHiddenDirectories,
+    ...(input.allowedHiddenDirectories ?? []),
+  ];
   const discoveredRepos = await Promise.all(
     repoPaths.map((repoPath) =>
       discoverRepo(workspaceRoot, resolve(workspaceRoot, repoPath), {
         includeIgnored: input.includeIgnored === true,
+        allowedHiddenDirectories,
+        repoPath: resolve(workspaceRoot, repoPath),
       }),
     ),
   );
@@ -271,7 +278,12 @@ async function walk(
   for (const entry of await safeReaddir(root)) {
     const absolutePath = join(root, entry.name);
     if (entry.isDirectory()) {
-      if (!options.includeIgnored && directoryIsIgnored(entry.name)) {
+      const relativeDirectoryPath = normalizeRelativePath(relative(options.repoPath, absolutePath));
+      if (directoryIsIgnored(entry.name, {
+        includeIgnored: options.includeIgnored,
+        allowedHiddenDirectories: options.allowedHiddenDirectories,
+        relativePath: relativeDirectoryPath,
+      })) {
         onSkippedDirectory?.(absolutePath);
         continue;
       }
@@ -342,9 +354,12 @@ async function readProjectConfig(path: string): Promise<ProjectConfig | undefine
   return undefined;
 }
 
-async function readWorkspaceManifest(workspaceRoot: string, manifestPath: string | undefined): Promise<string[]> {
+async function readWorkspaceManifest(
+  workspaceRoot: string,
+  manifestPath: string | undefined,
+): Promise<WorkspaceManifestConfig> {
   if (!manifestPath) {
-    return [];
+    return { repoPaths: [], allowedHiddenDirectories: [] };
   }
   const resolvedPath = resolve(workspaceRoot, manifestPath);
   const manifest = JSON.parse(await readFile(resolvedPath, "utf8")) as WorkspaceManifest;
@@ -353,17 +368,26 @@ async function readWorkspaceManifest(workspaceRoot: string, manifestPath: string
     : Array.isArray(manifest.repos)
       ? manifest.repos
       : [];
-  return repos
-    .map((repo) => {
-      if (typeof repo === "string") {
-        return repo;
-      }
-      if (repo && typeof repo === "object" && typeof (repo as { path?: unknown }).path === "string") {
-        return (repo as { path: string }).path;
-      }
-      return undefined;
-    })
-    .filter((repo): repo is string => typeof repo === "string" && repo.length > 0);
+  const allowedHiddenDirectories = Array.isArray(manifest.allowedHiddenDirectories)
+    ? manifest.allowedHiddenDirectories
+    : Array.isArray(manifest.includeHiddenDirectories)
+      ? manifest.includeHiddenDirectories
+      : [];
+  return {
+    repoPaths: repos
+      .map((repo) => {
+        if (typeof repo === "string") {
+          return repo;
+        }
+        if (repo && typeof repo === "object" && typeof (repo as { path?: unknown }).path === "string") {
+          return (repo as { path: string }).path;
+        }
+        return undefined;
+      })
+      .filter((repo): repo is string => typeof repo === "string" && repo.length > 0),
+    allowedHiddenDirectories: allowedHiddenDirectories
+      .filter((directory): directory is string => typeof directory === "string" && directory.length > 0),
+  };
 }
 
 async function inferSourceRoots(packagePath: string, config: ProjectConfig | undefined): Promise<string[]> {
@@ -579,8 +603,16 @@ interface ProjectConfig {
 interface WorkspaceManifest {
   repoPaths?: unknown[];
   repos?: Array<string | { path?: unknown }>;
+  allowedHiddenDirectories?: unknown[];
+  includeHiddenDirectories?: unknown[];
 }
 
-interface DiscoverOptions {
+interface WorkspaceManifestConfig {
+  repoPaths: string[];
+  allowedHiddenDirectories: string[];
+}
+
+interface DiscoverOptions extends IgnorePolicyOptions {
   includeIgnored: boolean;
+  repoPath: string;
 }

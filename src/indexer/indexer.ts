@@ -25,7 +25,12 @@ import {
 } from "../vectors/embedding.js";
 import { discoverWorkspace, type DiscoveredFile, type DiscoveredRepo } from "../workspace/discovery.js";
 import { summarizeWorkspaceDiscovery } from "../workspace/discovery-summary.js";
-import { embedGraphChunks, type EmbeddableChunkNode } from "./chunk-embeddings.js";
+import {
+  embedGraphChunks,
+  summarizeGraphEmbeddingInputs,
+  type EmbeddableChunkNode,
+  type EmbeddingInputSummary,
+} from "./chunk-embeddings.js";
 import { applyFrameworkGraphFacts } from "./framework-graph.js";
 import {
   factsSchemaVersion,
@@ -55,6 +60,7 @@ export interface IndexWorkspaceInput {
   embeddingProviderName?: string;
   embeddingModel?: string;
   includeIgnored?: boolean;
+  allowedHiddenDirectories?: string[];
   workspaceManifestPath?: string;
   progress?: IndexProgressReporter;
 }
@@ -148,6 +154,7 @@ async function buildIndexWorkspace(
     workspaceRoot: input.workspaceRoot,
     repoPaths: input.repoPaths,
     includeIgnored: input.includeIgnored,
+    allowedHiddenDirectories: input.allowedHiddenDirectories,
     workspaceManifestPath: input.workspaceManifestPath,
   });
   const discoveredFileCount = workspace.repos.reduce((sum, repo) => sum + repo.files.length, 0);
@@ -174,6 +181,7 @@ async function buildIndexWorkspace(
     embeddingProvider,
     mode: options.mode,
     includeIgnored: input.includeIgnored,
+    allowedHiddenDirectories: input.allowedHiddenDirectories,
     workspaceManifestPath: input.workspaceManifestPath,
   });
   await reportProgress(input.progress, {
@@ -359,6 +367,13 @@ async function buildIndexWorkspace(
             embeddingModel: embeddingProvider.model,
             embeddingProvider: embeddingProvider.provider,
             embeddingInputHash: chunk.embeddingInputHash,
+            embeddingInputTokenCount: chunk.embeddingInputTokenCount,
+            embeddingInputTokenBudget: chunk.embeddingInputTokenBudget,
+            embeddingInputOversized: chunk.embeddingInputOversized,
+            embeddingInputSplitFromIdSuffix: chunk.embeddingInputSplitFromIdSuffix,
+            embeddingInputSplitPart: chunk.embeddingInputSplitPart,
+            embeddingInputSplitTotal: chunk.embeddingInputSplitTotal,
+            embeddingInputTruncated: chunk.embeddingInputTruncated,
             ownerRepo: repo.name,
             ownerFile: file.relativePath,
             origin: "tree-sitter",
@@ -636,6 +651,7 @@ async function buildIndexWorkspace(
     message: "Embedding chunks",
     counters: {
       chunksTotal: graph.chunks.size,
+      ...embeddingInputCounters(summarizeGraphEmbeddingInputs(graph.chunks)),
     },
   });
   const embedStats = await embedGraphChunks(graph.chunks, embeddingProvider, fileFactPlan.embeddingCache, {
@@ -653,6 +669,23 @@ async function buildIndexWorkspace(
           chunksEmbedded: update.chunksEmbedded,
           embeddingBatchSize: update.batchSize,
           embeddingBatchesCompleted: update.batchesCompleted,
+          embeddingInputsTotal: update.embeddingInputsTotal,
+          embeddingInputsMissing: update.embeddingInputsMissing,
+          embeddingInputsReused: update.embeddingInputsReused,
+          embeddingDuplicateInputChunks: update.duplicateInputChunks,
+          embeddingInputTokensMax: update.inputTokensMax,
+          embeddingInputTokensP50: update.inputTokensP50,
+          embeddingInputTokensP90: update.inputTokensP90,
+          embeddingInputTokensP95: update.inputTokensP95,
+          embeddingInputTokensP99: update.inputTokensP99,
+          embeddingInputOversized: update.oversizedInputs,
+          embeddingInputSplitChunks: update.splitChunks,
+          embeddingInputTruncationFallbacks: update.truncationFallbacks,
+          embeddingBatchMaxTokens: update.batchMaxTokens,
+          embeddingBatchTotalTokens: update.batchTotalTokens,
+          embeddingBatchPaddedTokens: update.batchPaddedTokens,
+          embeddingBatchPaddingWasteTokens: update.batchPaddingWasteTokens,
+          embeddingBatchPaddingWasteRatio: update.batchPaddingWasteRatio,
         },
       });
     },
@@ -663,6 +696,7 @@ async function buildIndexWorkspace(
     counters: {
       chunksEmbedded: embedStats.embedded,
       chunksReused: embedStats.reused,
+      ...embeddingInputCounters(embedStats.embeddingInput),
     },
   });
   const generatedAt = new Date().toISOString();
@@ -696,6 +730,7 @@ async function buildIndexWorkspace(
       model: embeddingProvider.model,
       dimension: embeddingProvider.dimension,
     },
+    embeddingInput: embedStats.embeddingInput,
     incremental: incrementalStats,
     health,
   };
@@ -928,6 +963,22 @@ function scipCount(
 
 function safePathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]/g, "_");
+}
+
+function embeddingInputCounters(summary: EmbeddingInputSummary): NonNullable<IndexProgressUpdate["counters"]> {
+  return {
+    embeddingInputsTotal: summary.inputsTotal,
+    embeddingDuplicateInputChunks: summary.duplicateInputChunks,
+    embeddingInputTokenBudget: summary.tokenBudget,
+    embeddingInputTokensMax: summary.maxTokens,
+    embeddingInputTokensP50: summary.p50Tokens,
+    embeddingInputTokensP90: summary.p90Tokens,
+    embeddingInputTokensP95: summary.p95Tokens,
+    embeddingInputTokensP99: summary.p99Tokens,
+    embeddingInputOversized: summary.oversizedInputs,
+    embeddingInputSplitChunks: summary.splitChunks,
+    embeddingInputTruncationFallbacks: summary.truncationFallbacks,
+  };
 }
 
 function addAstBoundaryNodes(

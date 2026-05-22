@@ -13,7 +13,6 @@ const require = createRequire(import.meta.url);
 const Parser = require("tree-sitter");
 const JavaScript = require("tree-sitter-javascript");
 const TypeScript = require("tree-sitter-typescript");
-const maxChunkContentBytes = 64_000;
 
 export function parseSourceFile(input: ChunkSourceFileInput): { rootNode: TreeSitterNode } | undefined {
   const parser = new Parser();
@@ -44,7 +43,7 @@ export function factBase(input: ChunkSourceFileInput, node: TreeSitterNode): {
 
 export function sourceForRange(source: string, range: SourceRange): string {
   const lines = source.split(/\r?\n/);
-  return truncateContent(lines.slice(range.startLine - 1, range.endLine).join("\n"));
+  return lines.slice(range.startLine - 1, range.endLine).join("\n");
 }
 
 export function fallbackRange(input: ChunkSourceFileInput): SourceRange {
@@ -256,13 +255,6 @@ export function legacyChunkIdSuffix(range: SourceRange): string {
 export function stableFactId(kind: string, name: string, range: SourceRange): string {
   const safeName = name.replace(/\s+/g, " ").slice(0, 80);
   return `${kind}:${hashContent(safeName).slice(0, 8)}:${range.startLine}-${range.startColumn}-${range.endLine}-${range.endColumn}`;
-}
-
-export function truncateContent(content: string): string {
-  if (Buffer.byteLength(content, "utf8") <= maxChunkContentBytes) {
-    return content;
-  }
-  return `${content.slice(0, maxChunkContentBytes)}\n[truncated]`;
 }
 
 export function hashContent(content: string): string {

@@ -28,9 +28,13 @@ describe("chunk embeddings", () => {
       new Map([["hash-cached", [0.25, 0.75]]]),
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       embedded: 3,
       reused: 1,
+      embeddingInput: expect.objectContaining({
+        inputsTotal: 3,
+        duplicateInputChunks: 1,
+      }),
     });
     expect(provider.batches).toEqual([[
       chunkEmbeddingInput(duplicateLeft),
@@ -73,14 +77,14 @@ describe("chunk embeddings", () => {
       },
     );
 
-    expect(progress).toEqual([
+    expect(progress).toMatchObject([
       {
         event: "batch_started",
         batchIndex: 1,
         batchSize: 2,
         batchesCompleted: 0,
         chunksEmbedded: 0,
-        chunksVisited: 2,
+        chunksVisited: 3,
       },
       {
         event: "batch_completed",
@@ -88,7 +92,7 @@ describe("chunk embeddings", () => {
         batchSize: 2,
         batchesCompleted: 1,
         chunksEmbedded: 2,
-        chunksVisited: 2,
+        chunksVisited: 3,
       },
       {
         event: "batch_started",
@@ -107,6 +111,73 @@ describe("chunk embeddings", () => {
         chunksVisited: 3,
       },
     ]);
+  });
+
+  it("groups missing embedding inputs by token length while preserving chunk assignment", async () => {
+    const shortLeft = chunk("short-left", "ShortLeft", "tiny alpha", "hash-short-left");
+    const longLeft = chunk("long-left", "LongLeft", "long ".repeat(120), "hash-long-left");
+    const shortRight = chunk("short-right", "ShortRight", "tiny beta", "hash-short-right");
+    const longRight = chunk("long-right", "LongRight", "verbose ".repeat(130), "hash-long-right");
+    const provider = countingProvider();
+
+    await embedGraphChunks(
+      new Map([
+        [shortLeft.id, shortLeft],
+        [longLeft.id, longLeft],
+        [shortRight.id, shortRight],
+        [longRight.id, longRight],
+      ]),
+      provider,
+      new Map(),
+      { batchSize: 2 },
+    );
+
+    expect(provider.batches).toEqual([
+      [chunkEmbeddingInput(shortLeft), chunkEmbeddingInput(shortRight)],
+      [chunkEmbeddingInput(longLeft), chunkEmbeddingInput(longRight)],
+    ]);
+    expect(shortLeft.embedding).toEqual([chunkEmbeddingInput(shortLeft).length, 0]);
+    expect(shortRight.embedding).toEqual([chunkEmbeddingInput(shortRight).length, 1]);
+    expect(longLeft.embedding).toEqual([chunkEmbeddingInput(longLeft).length, 0]);
+    expect(longRight.embedding).toEqual([chunkEmbeddingInput(longRight).length, 1]);
+  });
+
+  it("reports token telemetry and padding waste for embedding batches", async () => {
+    const short = chunk("short", "Short", "tiny", "hash-short");
+    const long = chunk("long", "Long", "long ".repeat(40), "hash-long");
+    const provider = countingProvider();
+    const progress: Array<Record<string, unknown>> = [];
+
+    await embedGraphChunks(
+      new Map([
+        [short.id, short],
+        [long.id, long],
+      ]),
+      provider,
+      new Map(),
+      {
+        batchSize: 2,
+        onProgress: (update) => {
+          progress.push(update as unknown as Record<string, unknown>);
+        },
+      },
+    );
+
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "batch_started",
+          embeddingInputsTotal: 2,
+          embeddingInputsMissing: 2,
+          inputTokensMax: expect.any(Number),
+          inputTokensP50: expect.any(Number),
+          inputTokensP95: expect.any(Number),
+          oversizedInputs: 0,
+          batchMaxTokens: expect.any(Number),
+          batchPaddingWasteTokens: expect.any(Number),
+        }),
+      ]),
+    );
   });
 });
 
@@ -161,6 +232,7 @@ function countingProvider(): EmbeddingProvider & { batches: string[][] } {
     provider: "hash",
     model: "counting-test",
     dimension: 2,
+    maxInputTokens: 8_192,
     batches,
     async embed(text: string): Promise<number[]> {
       return [text.length, text.length + 1];
@@ -168,6 +240,9 @@ function countingProvider(): EmbeddingProvider & { batches: string[][] } {
     async embedBatch(texts: string[]): Promise<number[][]> {
       batches.push(texts);
       return texts.map((text, index) => [text.length, index]);
+    },
+    async countTokens(texts: string[]): Promise<number[]> {
+      return texts.map((text) => text.split(/\s+/).filter(Boolean).length);
     },
   };
 }

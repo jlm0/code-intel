@@ -14,12 +14,16 @@ export interface SearchTextInput {
   repoPaths: string[];
   limit: number;
   includeIgnored?: boolean;
+  allowedHiddenDirectories?: string[];
 }
 
 export async function searchText(input: SearchTextInput): Promise<QueryResult> {
   const results: QueryResult["results"] = [];
   for (const repoPath of input.repoPaths.map((path) => resolve(path))) {
-    const matches = await runRipgrep(input.pattern, repoPath, input.limit - results.length, input.includeIgnored === true);
+    const matches = await runRipgrep(input.pattern, repoPath, input.limit - results.length, {
+      includeIgnored: input.includeIgnored === true,
+      allowedHiddenDirectories: input.allowedHiddenDirectories,
+    });
     results.push(...matches);
     if (results.length >= input.limit) {
       break;
@@ -37,7 +41,7 @@ async function runRipgrep(
   pattern: string,
   repoPath: string,
   limit: number,
-  includeIgnored: boolean,
+  options: { includeIgnored: boolean; allowedHiddenDirectories?: string[] },
 ): Promise<QueryResult["results"]> {
   if (limit <= 0) {
     return [];
@@ -49,7 +53,7 @@ async function runRipgrep(
     "--max-columns",
     String(maxExcerptBytes),
     "--hidden",
-    ...(includeIgnored ? [] : defaultRipgrepIgnoreGlobs().flatMap((glob) => ["--glob", glob])),
+    ...defaultRipgrepIgnoreGlobs(options).flatMap((glob) => ["--glob", glob]),
     "--",
     pattern,
     repoPath,

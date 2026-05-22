@@ -290,6 +290,7 @@ function createCountingProvider(): EmbeddingProvider & { embeddedTexts: string[]
     provider: "hash",
     model: "counting-hash-v1",
     dimension: 4,
+    maxInputTokens: 8_192,
     embeddedTexts,
     async embed(text: string) {
       return this.embedBatch([text]).then((vectors) => vectors[0] ?? []);
@@ -297,6 +298,9 @@ function createCountingProvider(): EmbeddingProvider & { embeddedTexts: string[]
     async embedBatch(texts: string[]) {
       embeddedTexts.push(...texts);
       return texts.map((text) => vectorForText(text));
+    },
+    async countTokens(texts: string[]) {
+      return texts.map((text) => text.split(/\s+/).filter(Boolean).length);
     },
   };
 }

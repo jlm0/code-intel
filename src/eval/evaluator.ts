@@ -69,6 +69,7 @@ export interface EvalReport {
   index: {
     stats: IndexManifest["stats"];
     repos: IndexManifest["repos"];
+    embeddingInput?: NonNullable<IndexManifest["embeddingInput"]>;
   };
   summary: EvalReportSummary;
   cases: EvalCaseResult[];
@@ -175,6 +176,7 @@ export async function runEvalSuite(options: EvalOptions = {}): Promise<EvalRepor
       index: {
         stats: manifest.stats,
         repos: manifest.repos,
+        embeddingInput: manifest.embeddingInput,
       },
       summary,
       cases,

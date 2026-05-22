@@ -109,6 +109,33 @@ export const IncrementalStatsSchema = z.object({
   }),
 });
 
+export const EmbeddingInputTopEntrySchema = z.object({
+  repo: z.string().optional(),
+  file: z.string().optional(),
+  name: z.string().optional(),
+  kind: z.string().optional(),
+  tokens: z.number().int().min(0),
+  splitFromIdSuffix: z.string().optional(),
+});
+
+export const EmbeddingInputStatsSchema = z.object({
+  chunksTotal: z.number().int().min(0),
+  inputsTotal: z.number().int().min(0),
+  duplicateInputChunks: z.number().int().min(0),
+  tokenBudget: z.number().int().min(1),
+  oversizedInputs: z.number().int().min(0),
+  splitChunks: z.number().int().min(0),
+  truncationFallbacks: z.number().int().min(0),
+  totalTokens: z.number().int().min(0),
+  maxTokens: z.number().int().min(0),
+  averageTokens: z.number().int().min(0),
+  p50Tokens: z.number().int().min(0),
+  p90Tokens: z.number().int().min(0),
+  p95Tokens: z.number().int().min(0),
+  p99Tokens: z.number().int().min(0),
+  topInputs: z.array(EmbeddingInputTopEntrySchema).default([]),
+});
+
 export const IndexProgressOperationSchema = z.enum(["index", "update"]);
 export const IndexProgressStatusSchema = z.enum(["running", "succeeded", "failed", "stale"]);
 export const IndexProgressPhaseSchema = z.enum([
@@ -133,6 +160,24 @@ export const IndexProgressCountersSchema = z.object({
   chunksReused: z.number().int().min(0).optional(),
   embeddingBatchSize: z.number().int().min(1).optional(),
   embeddingBatchesCompleted: z.number().int().min(0).optional(),
+  embeddingInputsTotal: z.number().int().min(0).optional(),
+  embeddingInputsMissing: z.number().int().min(0).optional(),
+  embeddingInputsReused: z.number().int().min(0).optional(),
+  embeddingDuplicateInputChunks: z.number().int().min(0).optional(),
+  embeddingInputTokenBudget: z.number().int().min(1).optional(),
+  embeddingInputTokensMax: z.number().int().min(0).optional(),
+  embeddingInputTokensP50: z.number().int().min(0).optional(),
+  embeddingInputTokensP90: z.number().int().min(0).optional(),
+  embeddingInputTokensP95: z.number().int().min(0).optional(),
+  embeddingInputTokensP99: z.number().int().min(0).optional(),
+  embeddingInputOversized: z.number().int().min(0).optional(),
+  embeddingInputSplitChunks: z.number().int().min(0).optional(),
+  embeddingInputTruncationFallbacks: z.number().int().min(0).optional(),
+  embeddingBatchMaxTokens: z.number().int().min(0).optional(),
+  embeddingBatchTotalTokens: z.number().int().min(0).optional(),
+  embeddingBatchPaddedTokens: z.number().int().min(0).optional(),
+  embeddingBatchPaddingWasteTokens: z.number().int().min(0).optional(),
+  embeddingBatchPaddingWasteRatio: z.number().min(0).optional(),
   nodesWritten: z.number().int().min(0).optional(),
   edgesWritten: z.number().int().min(0).optional(),
 });
@@ -355,6 +400,7 @@ export const IndexManifestSchema = z.object({
     model: z.string().min(1),
     dimension: z.number().int().min(1),
   }),
+  embeddingInput: EmbeddingInputStatsSchema.optional(),
   incremental: IncrementalStatsSchema.optional(),
   health: z.array(HealthCheckSchema),
 });
@@ -447,6 +493,7 @@ export type CodeChunk = z.infer<typeof ChunkSchema>;
 export type FileFingerprint = z.infer<typeof FileFingerprintSchema>;
 export type HealthCheck = z.infer<typeof HealthCheckSchema>;
 export type IncrementalStats = z.infer<typeof IncrementalStatsSchema>;
+export type EmbeddingInputStats = z.infer<typeof EmbeddingInputStatsSchema>;
 export type IndexManifest = z.infer<typeof IndexManifestSchema>;
 export type IndexProgressCounters = z.infer<typeof IndexProgressCountersSchema>;
 export type IndexDiscoverySummary = z.infer<typeof IndexDiscoverySummarySchema>;

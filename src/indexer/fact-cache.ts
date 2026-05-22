@@ -41,6 +41,13 @@ export interface ChunkFact {
   contentHash: string;
   calls: string[];
   embeddingInputHash: string;
+  embeddingInputTokenCount?: number;
+  embeddingInputTokenBudget?: number;
+  embeddingInputOversized?: boolean;
+  embeddingInputSplitFromIdSuffix?: string;
+  embeddingInputSplitPart?: number;
+  embeddingInputSplitTotal?: number;
+  embeddingInputTruncated?: boolean;
   embedding?: number[];
 }
 
@@ -97,6 +104,13 @@ const ChunkFactSchema = z.object({
   contentHash: z.string().min(1),
   calls: z.array(z.string()),
   embeddingInputHash: z.string().min(1),
+  embeddingInputTokenCount: z.number().int().min(0).optional(),
+  embeddingInputTokenBudget: z.number().int().min(1).optional(),
+  embeddingInputOversized: z.boolean().optional(),
+  embeddingInputSplitFromIdSuffix: z.string().min(1).optional(),
+  embeddingInputSplitPart: z.number().int().min(1).optional(),
+  embeddingInputSplitTotal: z.number().int().min(1).optional(),
+  embeddingInputTruncated: z.boolean().optional(),
   embedding: z.array(z.number()).optional(),
 });
 

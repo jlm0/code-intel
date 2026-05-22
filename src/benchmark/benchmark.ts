@@ -39,6 +39,7 @@ export interface BenchmarkReport {
     repoPaths: string[];
   };
   embedding: IndexManifest["embedding"];
+  embeddingInput?: NonNullable<IndexManifest["embeddingInput"]>;
   scenarios: {
     coldIndex: BenchmarkIndexScenario;
     warmUpdate: BenchmarkIndexScenario;
@@ -181,6 +182,7 @@ export async function runBenchmarkSuite(options: BenchmarkOptions = {}): Promise
         repoPaths,
       },
       embedding: coldIndex.manifest.embedding,
+      embeddingInput: coldIndex.manifest.embeddingInput,
       scenarios: {
         coldIndex: stripScenarioManifest(coldIndex),
         warmUpdate: stripScenarioManifest(warmUpdate),

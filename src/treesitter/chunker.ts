@@ -18,7 +18,6 @@ import {
   languageLabelForFile,
   parseSourceFile,
   sortFacts,
-  truncateContent,
   visitWithAncestors,
 } from "./node-utils.js";
 import {
@@ -208,7 +207,7 @@ function fallbackChunk(input: ChunkSourceFileInput): SourceChunk {
     name: input.relativePath,
     kind: "Chunk",
     range,
-    content: truncateContent(input.content),
+    content: input.content,
     contentHash: hashContent(input.content),
     calls: [],
   };

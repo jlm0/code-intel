@@ -10,8 +10,10 @@ export interface EmbeddingProvider {
   provider: "hash" | "jina";
   model: string;
   dimension: number;
+  maxInputTokens: number;
   embed(text: string): Promise<number[]>;
   embedBatch(texts: string[]): Promise<number[][]>;
+  countTokens(texts: string[]): Promise<number[]>;
 }
 
 export interface EmbeddingProviderOptions {
@@ -37,11 +39,15 @@ export function createHashEmbeddingProvider(): EmbeddingProvider {
     provider: "hash",
     model: hashEmbeddingModel,
     dimension: hashEmbeddingDimension,
+    maxInputTokens: 8_192,
     async embed(text: string) {
       return embedText(text);
     },
     async embedBatch(texts: string[]) {
       return texts.map(embedText);
+    },
+    async countTokens(texts: string[]) {
+      return texts.map((text) => tokenize(text).length);
     },
   };
 }
@@ -59,7 +65,9 @@ export function embedText(text: string): number[] {
 class JinaEmbeddingProvider implements EmbeddingProvider {
   readonly provider = "jina" as const;
   readonly dimension = jinaEmbeddingDimension;
+  readonly maxInputTokens = 8_192;
   private extractor?: FeatureExtractionPipeline;
+  private tokenizer?: TokenizerLike;
 
   constructor(
     private readonly options: {
@@ -90,6 +98,18 @@ class JinaEmbeddingProvider implements EmbeddingProvider {
     return [normalizeVector(values as number[])];
   }
 
+  async countTokens(texts: string[]): Promise<number[]> {
+    if (texts.length === 0) {
+      return [];
+    }
+    const tokenizer = await this.getTokenizer();
+    return texts.map((text) =>
+      tokenizer.encode(text, {
+        add_special_tokens: true,
+      }).length
+    );
+  }
+
   private async getExtractor(): Promise<FeatureExtractionPipeline> {
     if (!this.extractor) {
       const transformers = await import("@huggingface/transformers");
@@ -98,6 +118,16 @@ class JinaEmbeddingProvider implements EmbeddingProvider {
       });
     }
     return this.extractor;
+  }
+
+  private async getTokenizer(): Promise<TokenizerLike> {
+    if (!this.tokenizer) {
+      const transformers = await import("@huggingface/transformers");
+      this.tokenizer = await transformers.AutoTokenizer.from_pretrained(this.options.model, {
+        cache_dir: join(this.options.cachePath),
+      }) as TokenizerLike;
+    }
+    return this.tokenizer;
   }
 }
 
@@ -138,4 +168,8 @@ function normalizeVector(vector: number[]): number[] {
 
 type FeatureExtractionPipeline = {
   (texts: string | string[], options?: { pooling?: "mean"; normalize?: boolean }): Promise<{ tolist(): unknown }>;
+};
+
+type TokenizerLike = {
+  encode(text: string, options?: { add_special_tokens?: boolean }): number[];
 };

@@ -1,5 +1,32 @@
 [
   {
+    "id": "adv.query.semantic-after-truncation-source",
+    "name": "Semantic search finds raw source evidence after the old embedding truncation point",
+    "mode": "semantic",
+    "query": "merchantRefundReconciliationOverride",
+    "limit": 10,
+    "gate": {
+      "id": "adv.target.embedding.after-truncation-signal",
+      "status": "target",
+      "capability": "embedding-input-source-capture",
+      "layer": "embedding",
+      "description": "Relevant raw source evidence appears after the old 6k character embedding-input cutoff and must still be retrievable without generated artifacts winning."
+    },
+    "expected": [
+      {
+        "file": "packages/syntax/src/oversized-embedding-source.ts",
+        "maxRank": 5
+      }
+    ],
+    "notExpected": [
+      {
+        "file": ".vercel/output/oversized-generated.ts",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "embedding"
+  },
+  {
     "id": "adv.query.find-overloaded-symbol-once",
     "name": "Overloaded function returns one logical symbol, not duplicates",
     "mode": "find-symbol",

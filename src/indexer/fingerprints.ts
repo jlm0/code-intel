@@ -36,6 +36,7 @@ export async function fingerprintDiscoveredFile(
 export async function calculateConfigHash(input: {
   workspace: DiscoveredWorkspace;
   includeIgnored?: boolean;
+  allowedHiddenDirectories?: string[];
   workspaceManifestPath?: string;
   embeddingProvider: EmbeddingProvider;
 }): Promise<string> {
@@ -43,6 +44,7 @@ export async function calculateConfigHash(input: {
   hash.update(schemaVersion);
   hash.update(JSON.stringify({
     includeIgnored: input.includeIgnored === true,
+    allowedHiddenDirectories: input.allowedHiddenDirectories ?? [],
     workspaceManifestPath: input.workspaceManifestPath ?? null,
     embedding: {
       provider: input.embeddingProvider.provider,

@@ -225,4 +225,48 @@ describe("workspace discovery", () => {
       await rm(repoPath, { recursive: true, force: true });
     }
   });
+
+  it("excludes hidden artifact directories by default while preserving explicit hidden-source allowlists", async () => {
+    const repoPath = await mkdtemp(join(tmpdir(), "code-intel-hidden-artifacts-"));
+    try {
+      await mkdir(join(repoPath, ".vercel", "output"), { recursive: true });
+      await mkdir(join(repoPath, ".storybook"), { recursive: true });
+      await writeFile(join(repoPath, "package.json"), JSON.stringify({ name: "@fixture/hidden-artifacts" }));
+      await writeFile(join(repoPath, ".vercel", "output", "route.ts"), "export const generatedRoute = true;\n");
+      await writeFile(join(repoPath, ".storybook", "preview.ts"), "export const previewSource = true;\n");
+
+      const defaultWorkspace = await discoverWorkspace({
+        workspaceRoot: repoPath,
+        repoPaths: [repoPath],
+      });
+      expect(defaultWorkspace.repos[0]?.files.map((file) => file.relativePath)).toEqual([]);
+      expect(defaultWorkspace.diagnostics.files).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "directory",
+            relativePath: ".vercel",
+            status: "excluded",
+            reason: "ignored-directory",
+          }),
+          expect.objectContaining({
+            kind: "directory",
+            relativePath: ".storybook",
+            status: "excluded",
+            reason: "ignored-directory",
+          }),
+        ]),
+      );
+
+      const allowlistedWorkspace = await discoverWorkspace({
+        workspaceRoot: repoPath,
+        repoPaths: [repoPath],
+        allowedHiddenDirectories: [".storybook"],
+      });
+      expect(allowlistedWorkspace.repos[0]?.files.map((file) => file.relativePath)).toEqual([
+        ".storybook/preview.ts",
+      ]);
+    } finally {
+      await rm(repoPath, { recursive: true, force: true });
+    }
+  });
 });

@@ -18,6 +18,15 @@ export interface SourceChunk {
   content: string;
   contentHash: string;
   calls: string[];
+  embeddingInput?: {
+    tokenCount?: number;
+    tokenBudget?: number;
+    oversized?: boolean;
+    splitFromIdSuffix?: string;
+    splitPart?: number;
+    splitTotal?: number;
+    truncated?: boolean;
+  };
 }
 
 export type SourceDeclarationKind =

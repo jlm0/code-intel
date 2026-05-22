@@ -1,7 +1,13 @@
 import type { CodeNode } from "../schema/schemas.js";
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import type { ChunkFact } from "./fact-cache.js";
-import { chunkEmbeddingInput } from "./embedding-input.js";
+import {
+  chunkEmbeddingInput,
+  embeddingBatchTelemetry,
+  summarizeEmbeddingInputTokens,
+  type EmbeddingInputTokenStats,
+  type EmbeddingInputTopEntry,
+} from "./embedding-input.js";
 
 export type EmbeddableChunkNode = CodeNode & {
   content: string;
@@ -17,12 +23,35 @@ export type EmbeddingBatchProgressUpdate = {
   batchesCompleted: number;
   chunksEmbedded: number;
   chunksVisited: number;
+  embeddingInputsTotal: number;
+  embeddingInputsMissing: number;
+  embeddingInputsReused: number;
+  duplicateInputChunks: number;
+  inputTokensMax: number;
+  inputTokensP50: number;
+  inputTokensP90: number;
+  inputTokensP95: number;
+  inputTokensP99: number;
+  oversizedInputs: number;
+  splitChunks: number;
+  truncationFallbacks: number;
+  batchMaxTokens: number;
+  batchTotalTokens: number;
+  batchPaddedTokens: number;
+  batchPaddingWasteTokens: number;
+  batchPaddingWasteRatio: number;
 };
 
 export interface EmbedGraphChunksOptions {
   batchSize?: number;
   onProgress?: (update: EmbeddingBatchProgressUpdate) => void | Promise<void>;
 }
+
+export type EmbeddingInputSummary = EmbeddingInputTokenStats & {
+  chunksTotal: number;
+  duplicateInputChunks: number;
+  topInputs: EmbeddingInputTopEntry[];
+};
 
 const defaultEmbeddingBatchSize = 16;
 
@@ -31,16 +60,29 @@ export async function embedGraphChunks(
   embeddingProvider: EmbeddingProvider,
   embeddingCache: Map<string, number[]>,
   options: EmbedGraphChunksOptions = {},
-): Promise<{ embedded: number; reused: number }> {
-  const missingInputs = new Map<string, { embeddingInputHash: string; input: string; chunks: EmbeddableChunkNode[] }>();
+): Promise<{ embedded: number; reused: number; embeddingInput: EmbeddingInputSummary }> {
+  const missingInputs = new Map<string, EmbeddingInputEntry>();
+  const allInputs = new Map<string, EmbeddingInputEntry>();
   const batchSize = normalizeBatchSize(options.batchSize);
   let reused = 0;
   let embedded = 0;
-  let batchesCompleted = 0;
   let chunksVisited = 0;
 
   for (const chunk of chunksById.values()) {
     chunksVisited += 1;
+    const input = chunkEmbeddingInput(chunk);
+    const tokenCount = chunk.fact.embeddingInputTokenCount ?? (await embeddingProvider.countTokens([input]))[0] ?? 0;
+    const inputEntry = allInputs.get(chunk.embeddingInputHash);
+    if (inputEntry) {
+      inputEntry.chunks.push(chunk);
+    } else {
+      allInputs.set(chunk.embeddingInputHash, {
+        embeddingInputHash: chunk.embeddingInputHash,
+        input,
+        tokenCount,
+        chunks: [chunk],
+      });
+    }
     const cachedEmbedding = chunk.embedding.length === embeddingProvider.dimension
       ? chunk.embedding
       : embeddingCache.get(chunk.embeddingInputHash);
@@ -55,38 +97,37 @@ export async function embedGraphChunks(
       } else {
         missingInputs.set(chunk.embeddingInputHash, {
           embeddingInputHash: chunk.embeddingInputHash,
-          input: chunkEmbeddingInput(chunk),
+          input,
+          tokenCount,
           chunks: [chunk],
         });
-      }
-      if (missingInputs.size >= batchSize) {
-        const progress = await flushMissingInputs(missingInputs, embeddingProvider, embeddingCache, {
-          batchIndex: batchesCompleted + 1,
-          batchesCompleted,
-          chunksEmbedded: embedded,
-          chunksVisited,
-          onProgress: options.onProgress,
-        });
-        batchesCompleted += 1;
-        embedded += progress.embedded;
       }
     }
   }
 
-  const progress = await flushMissingInputs(missingInputs, embeddingProvider, embeddingCache, {
-    batchIndex: batchesCompleted + 1,
-    batchesCompleted,
-    chunksEmbedded: embedded,
-    chunksVisited,
-    onProgress: options.onProgress,
-  });
-  embedded += progress.embedded;
+  const embeddingInput = summarizeEmbeddingInputEntries([...allInputs.values()], chunksById);
+  const batches = createLengthAwareBatches([...missingInputs.values()], batchSize);
+  let batchesCompleted = 0;
+  for (const batch of batches) {
+    const progress = await flushMissingInputs(batch, embeddingProvider, embeddingCache, {
+      batchIndex: batchesCompleted + 1,
+      batchesCompleted,
+      chunksEmbedded: embedded,
+      chunksVisited,
+      embeddingInput,
+      embeddingInputsMissing: missingInputs.size,
+      embeddingInputsReused: allInputs.size - missingInputs.size,
+      onProgress: options.onProgress,
+    });
+    batchesCompleted += 1;
+    embedded += progress.embedded;
+  }
 
-  return { embedded, reused };
+  return { embedded, reused, embeddingInput };
 }
 
 async function flushMissingInputs(
-  missingInputs: Map<string, { embeddingInputHash: string; input: string; chunks: EmbeddableChunkNode[] }>,
+  batch: EmbeddingInputEntry[],
   embeddingProvider: EmbeddingProvider,
   embeddingCache: Map<string, number[]>,
   progress: {
@@ -94,14 +135,16 @@ async function flushMissingInputs(
     batchesCompleted: number;
     chunksEmbedded: number;
     chunksVisited: number;
+    embeddingInput: EmbeddingInputSummary;
+    embeddingInputsMissing: number;
+    embeddingInputsReused: number;
     onProgress?: (update: EmbeddingBatchProgressUpdate) => void | Promise<void>;
   },
 ): Promise<{ embedded: number }> {
-  if (missingInputs.size === 0) {
+  if (batch.length === 0) {
     return { embedded: 0 };
   }
-  const batch = [...missingInputs.values()];
-  missingInputs.clear();
+  const batchTelemetry = embeddingBatchTelemetry(batch.map((entry) => entry.tokenCount));
   await progress.onProgress?.({
     event: "batch_started",
     batchIndex: progress.batchIndex,
@@ -109,6 +152,7 @@ async function flushMissingInputs(
     batchesCompleted: progress.batchesCompleted,
     chunksEmbedded: progress.chunksEmbedded,
     chunksVisited: progress.chunksVisited,
+    ...progressFields(progress, batchTelemetry),
   });
   const embeddings = await embeddingProvider.embedBatch(
     batch.map((entry) => entry.input),
@@ -130,8 +174,144 @@ async function flushMissingInputs(
     batchesCompleted: progress.batchesCompleted + 1,
     chunksEmbedded: progress.chunksEmbedded + embedded,
     chunksVisited: progress.chunksVisited,
+    ...progressFields(progress, batchTelemetry),
   });
   return { embedded };
+}
+
+export function summarizeGraphEmbeddingInputs(
+  chunksById: Map<string, EmbeddableChunkNode>,
+): EmbeddingInputSummary {
+  const uniqueInputs = new Map<string, EmbeddableChunkNode>();
+  let splitChunks = 0;
+  let truncationFallbacks = 0;
+  for (const chunk of chunksById.values()) {
+    if (!uniqueInputs.has(chunk.embeddingInputHash)) {
+      uniqueInputs.set(chunk.embeddingInputHash, chunk);
+    }
+    if (chunk.fact.embeddingInputSplitPart !== undefined) {
+      splitChunks += 1;
+    }
+    if (chunk.fact.embeddingInputTruncated) {
+      truncationFallbacks += 1;
+    }
+  }
+  const inputs = [...uniqueInputs.values()];
+  const stats = summarizeEmbeddingInputTokens(
+    inputs.map((chunk) => chunk.fact.embeddingInputTokenCount ?? 0),
+    {
+      tokenBudget: inputs[0]?.fact.embeddingInputTokenBudget,
+      splitChunks,
+      truncationFallbacks,
+    },
+  );
+  return {
+    ...stats,
+    chunksTotal: chunksById.size,
+    duplicateInputChunks: Math.max(0, chunksById.size - inputs.length),
+    topInputs: inputs
+      .map((chunk) => ({
+        repo: chunk.repo,
+        file: chunk.file,
+        name: chunk.name,
+        kind: chunk.kind,
+        tokens: chunk.fact.embeddingInputTokenCount ?? 0,
+        splitFromIdSuffix: chunk.fact.embeddingInputSplitFromIdSuffix,
+      }))
+      .sort((left, right) =>
+        right.tokens - left.tokens ||
+        (left.file ?? "").localeCompare(right.file ?? "") ||
+        (left.name ?? "").localeCompare(right.name ?? ""),
+      )
+      .slice(0, 10),
+  };
+}
+
+function summarizeEmbeddingInputEntries(
+  entries: EmbeddingInputEntry[],
+  chunksById: Map<string, EmbeddableChunkNode>,
+): EmbeddingInputSummary {
+  let splitChunks = 0;
+  let truncationFallbacks = 0;
+  for (const chunk of chunksById.values()) {
+    if (chunk.fact.embeddingInputSplitPart !== undefined) {
+      splitChunks += 1;
+    }
+    if (chunk.fact.embeddingInputTruncated) {
+      truncationFallbacks += 1;
+    }
+  }
+  const stats = summarizeEmbeddingInputTokens(
+    entries.map((entry) => entry.tokenCount),
+    {
+      tokenBudget: entries[0]?.chunks[0]?.fact.embeddingInputTokenBudget,
+      splitChunks,
+      truncationFallbacks,
+    },
+  );
+  return {
+    ...stats,
+    chunksTotal: chunksById.size,
+    duplicateInputChunks: Math.max(0, chunksById.size - entries.length),
+    topInputs: entries
+      .map((entry) => {
+        const chunk = entry.chunks[0];
+        return {
+          repo: chunk?.repo,
+          file: chunk?.file,
+          name: chunk?.name,
+          kind: chunk?.kind,
+          tokens: entry.tokenCount,
+          splitFromIdSuffix: chunk?.fact.embeddingInputSplitFromIdSuffix,
+        };
+      })
+      .sort((left, right) =>
+        right.tokens - left.tokens ||
+        (left.file ?? "").localeCompare(right.file ?? "") ||
+        (left.name ?? "").localeCompare(right.name ?? ""),
+      )
+      .slice(0, 10),
+  };
+}
+
+function createLengthAwareBatches(entries: EmbeddingInputEntry[], batchSize: number): EmbeddingInputEntry[][] {
+  const sorted = [...entries].sort((left, right) =>
+    left.tokenCount - right.tokenCount ||
+    left.embeddingInputHash.localeCompare(right.embeddingInputHash),
+  );
+  const batches: EmbeddingInputEntry[][] = [];
+  for (let index = 0; index < sorted.length; index += batchSize) {
+    batches.push(sorted.slice(index, index + batchSize));
+  }
+  return batches;
+}
+
+function progressFields(
+  progress: {
+    embeddingInput: EmbeddingInputSummary;
+    embeddingInputsMissing: number;
+    embeddingInputsReused: number;
+  },
+  batchTelemetry: ReturnType<typeof embeddingBatchTelemetry>,
+): Omit<
+  EmbeddingBatchProgressUpdate,
+  "event" | "batchIndex" | "batchSize" | "batchesCompleted" | "chunksEmbedded" | "chunksVisited"
+> {
+  return {
+    embeddingInputsTotal: progress.embeddingInput.inputsTotal,
+    embeddingInputsMissing: progress.embeddingInputsMissing,
+    embeddingInputsReused: progress.embeddingInputsReused,
+    duplicateInputChunks: progress.embeddingInput.duplicateInputChunks,
+    inputTokensMax: progress.embeddingInput.maxTokens,
+    inputTokensP50: progress.embeddingInput.p50Tokens,
+    inputTokensP90: progress.embeddingInput.p90Tokens,
+    inputTokensP95: progress.embeddingInput.p95Tokens,
+    inputTokensP99: progress.embeddingInput.p99Tokens,
+    oversizedInputs: progress.embeddingInput.oversizedInputs,
+    splitChunks: progress.embeddingInput.splitChunks,
+    truncationFallbacks: progress.embeddingInput.truncationFallbacks,
+    ...batchTelemetry,
+  };
 }
 
 function normalizeBatchSize(value: number | undefined): number {
@@ -139,4 +319,11 @@ function normalizeBatchSize(value: number | undefined): number {
     return defaultEmbeddingBatchSize;
   }
   return Math.max(1, Math.floor(value));
+}
+
+interface EmbeddingInputEntry {
+  embeddingInputHash: string;
+  input: string;
+  tokenCount: number;
+  chunks: EmbeddableChunkNode[];
 }
