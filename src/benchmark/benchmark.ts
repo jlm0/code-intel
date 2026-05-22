@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { schemaVersion, type IncrementalStats, type IndexManifest } from "../schema/schemas.js";
+import { schemaVersion, type CodeEdge, type CodeNode, type IncrementalStats, type IndexManifest } from "../schema/schemas.js";
 import { indexWorkspace, updateWorkspace } from "../indexer/indexer.js";
+import { LadybugGraphStore, type GraphGenerationTimings } from "../graph/ladybug-store.js";
 import { createQueryEngine } from "../query/query-engine.js";
 import { createEmbeddingProvider } from "../vectors/embedding.js";
 import { loadEvalPack, prepareEvalCorpus } from "../eval/eval-pack.js";
@@ -24,6 +25,11 @@ export interface BenchmarkOptions {
   embeddingProvider?: string;
   embeddingModel?: string;
   includeMcpLatency?: boolean;
+  graphStoreScale?: {
+    nodes: number;
+    edges: number;
+    chunks: number;
+  };
 }
 
 export interface BenchmarkReport {
@@ -54,6 +60,23 @@ export interface BenchmarkReport {
       skipped?: boolean;
       reason?: string;
     };
+    graphStorePublish: {
+      schemaMs: number;
+      nodeWriteMs: number;
+      edgeWriteMs: number;
+      vectorIndexMs: number;
+      closeMs: number;
+      publishMs: number;
+      totalMs: number;
+      peakRssMb: number;
+      scale: {
+        nodes: number;
+        edges: number;
+        chunks: number;
+      };
+      failureClassification: "none" | "graph-store-lifecycle" | "active-generation-pointer" | "test-harness" | "unknown";
+      failureMessage?: string;
+    };
     ladybugLock: {
       concurrentRead: "pass" | "fail";
       readerDuringUpdate: "pass" | "fail";
@@ -82,6 +105,12 @@ export interface BenchmarkReport {
     peakRssMb: number;
   };
 }
+
+const defaultGraphStoreScale = {
+  nodes: 10_000,
+  edges: 100_000,
+  chunks: 2_000,
+};
 
 export interface BenchmarkIndexScenario {
   durationMs: number;
@@ -165,6 +194,10 @@ export async function runBenchmarkSuite(options: BenchmarkOptions = {}): Promise
       embeddingProvider,
       memorySamples,
     });
+    const graphStorePublish = await measureGraphStorePublish(
+      memorySamples,
+      options.graphStoreScale ?? defaultGraphStoreScale,
+    );
     const mcpQueryLatency = options.includeMcpLatency === false
       ? { skipped: true, reason: "disabled for focused benchmark run" }
       : await measureMcpLatency({ benchmarkWorkspace, indexPath, embeddingProvider: embeddingProvider.provider });
@@ -190,6 +223,7 @@ export async function runBenchmarkSuite(options: BenchmarkOptions = {}): Promise
         deletedFileUpdate: stripScenarioManifest(deletedFileUpdate),
         queryLatency,
         mcpQueryLatency,
+        graphStorePublish,
         ladybugLock,
       },
       batching: {
@@ -226,6 +260,147 @@ async function measureIndexScenario(
     stats: manifest.stats,
     incremental: manifest.incremental,
     manifest,
+  };
+}
+
+async function measureGraphStorePublish(
+  memorySamples: number[],
+  scale: { nodes: number; edges: number; chunks: number },
+): Promise<BenchmarkReport["scenarios"]["graphStorePublish"]> {
+  const indexPath = await mkdtemp(join(tmpdir(), "code-intel-graph-store-benchmark-"));
+  const start = performance.now();
+  const timings: GraphGenerationTimings = {
+    schemaMs: 0,
+    nodeWriteMs: 0,
+    edgeWriteMs: 0,
+    vectorIndexMs: 0,
+    closeMs: 0,
+    publishMs: 0,
+  };
+  try {
+    const store = new LadybugGraphStore(indexPath);
+    const input = createSyntheticGraphWriteInput(scale);
+    const generation = await store.rebuild(input);
+    Object.assign(timings, generation.timings);
+    const publish = await store.publishGeneration(generation.generationId);
+    timings.publishMs = publish.durationMs;
+    const peakRssMb = rssMb();
+    memorySamples.push(peakRssMb);
+    return {
+      ...timings,
+      totalMs: elapsedMs(start),
+      peakRssMb,
+      scale,
+      failureClassification: "none",
+    };
+  } catch (error) {
+    const peakRssMb = rssMb();
+    memorySamples.push(peakRssMb);
+    return {
+      ...timings,
+      totalMs: elapsedMs(start),
+      peakRssMb,
+      scale,
+      failureClassification: classifyGraphStorePublishFailure(error),
+      failureMessage: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    await rm(indexPath, { recursive: true, force: true });
+  }
+}
+
+function createSyntheticGraphWriteInput(scale: {
+  nodes: number;
+  edges: number;
+  chunks: number;
+}): Parameters<LadybugGraphStore["rebuild"]>[0] {
+  const embeddingDimension = 8;
+  const nodes = new Map<string, CodeNode>();
+  const chunksById = new Map<string, CodeNode & { content: string; embedding: number[] }>();
+  const fileCount = Math.max(1, Math.min(500, Math.floor(scale.nodes * 0.1)));
+  for (let index = 0; index < fileCount; index += 1) {
+    const node = graphNode(`file:${index}`, "File", {
+      file: `src/file-${index}.ts`,
+      name: `file-${index}.ts`,
+    });
+    nodes.set(node.id, node);
+  }
+  const chunkCount = Math.min(scale.chunks, scale.nodes);
+  for (let index = 0; index < chunkCount; index += 1) {
+    const node = graphNode(`chunk:${index}`, "Chunk", {
+      file: `src/file-${index % fileCount}.ts`,
+      name: `chunk${index}`,
+    }) as CodeNode & { content: string; embedding: number[] };
+    node.content = `export function chunk${index}() { return ${index}; }`;
+    node.embedding = Array.from({ length: embeddingDimension }, (_, dimension) =>
+      ((index + dimension) % embeddingDimension) / embeddingDimension
+    );
+    nodes.set(node.id, node);
+    chunksById.set(node.id, node);
+  }
+  for (let index = nodes.size; index < scale.nodes; index += 1) {
+    const node = graphNode(`symbol:${index}`, "Function", {
+      file: `src/file-${index % fileCount}.ts`,
+      name: `symbol${index}`,
+    });
+    nodes.set(node.id, node);
+  }
+
+  const nodeIds = [...nodes.keys()];
+  const edges = new Map<string, CodeEdge>();
+  const edgeKinds: CodeEdge["kind"][] = ["CONTAINS", "DEFINES", "HAS_CHUNK", "REFERENCES", "CALLS"];
+  for (let index = 0; index < scale.edges; index += 1) {
+    const fromId = nodeIds[index % nodeIds.length]!;
+    const toId = nodeIds[(index * 17 + 11) % nodeIds.length]!;
+    const kind = edgeKinds[index % edgeKinds.length]!;
+    edges.set(`edge:${index}`, {
+      schemaVersion,
+      id: `edge:${index}`,
+      kind,
+      fromId,
+      toId,
+      workspace: "graph-store-benchmark",
+      repo: "synthetic",
+      metadata: {
+        origin: "benchmark",
+        sequence: index,
+      },
+    });
+  }
+
+  return {
+    nodes,
+    edges,
+    chunksById,
+    embeddingDimension,
+  };
+}
+
+function graphNode(
+  id: string,
+  kind: CodeNode["kind"],
+  input: { file: string; name: string },
+): CodeNode {
+  return {
+    schemaVersion,
+    id,
+    kind,
+    workspace: "graph-store-benchmark",
+    repo: "synthetic",
+    file: input.file,
+    name: input.name,
+    language: "typescript",
+    range: {
+      startLine: 1,
+      endLine: 2,
+      startColumn: 0,
+      endColumn: 1,
+    },
+    metadata: {
+      ownerRepo: "synthetic",
+      ownerFile: input.file,
+      origin: "benchmark",
+    },
   };
 }
 
@@ -417,6 +592,22 @@ function classifyConcurrencyFailure(
     return "mcp-server-reuse";
   }
   if (message.includes("benchmark") || message.includes("fixture")) {
+    return "test-harness";
+  }
+  return "unknown";
+}
+
+function classifyGraphStorePublishFailure(
+  error: unknown,
+): BenchmarkReport["scenarios"]["graphStorePublish"]["failureClassification"] {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("Ladybug process lock") || message.includes(".ladybug.lock")) {
+    return "graph-store-lifecycle";
+  }
+  if (message.includes("current.json") || message.includes("generation") || message.includes("active")) {
+    return "active-generation-pointer";
+  }
+  if (message.includes("benchmark") || message.includes("synthetic")) {
     return "test-harness";
   }
   return "unknown";

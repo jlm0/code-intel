@@ -8,6 +8,7 @@ describe("benchmark harness", () => {
       suite: "js-ts-general",
       embeddingProvider: "hash",
       includeMcpLatency: false,
+      graphStoreScale: { nodes: 120, edges: 300, chunks: 30 },
     });
 
     expect(report).toMatchObject({
@@ -51,6 +52,21 @@ describe("benchmark harness", () => {
         },
         mcpQueryLatency: {
           skipped: true,
+        },
+        graphStorePublish: {
+          nodeWriteMs: expect.any(Number),
+          edgeWriteMs: expect.any(Number),
+          vectorIndexMs: expect.any(Number),
+          closeMs: expect.any(Number),
+          publishMs: expect.any(Number),
+          totalMs: expect.any(Number),
+          peakRssMb: expect.any(Number),
+          failureClassification: "none",
+          scale: {
+            nodes: expect.any(Number),
+            edges: expect.any(Number),
+            chunks: expect.any(Number),
+          },
         },
         ladybugLock: {
           concurrentRead: "pass",

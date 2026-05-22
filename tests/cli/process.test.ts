@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,6 +294,57 @@ describe("code-intel process behavior", () => {
     }
   }, 120_000);
 
+  it("writes terminal progress and releases the write lock when an index receives SIGTERM", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-cli-signal-"));
+    const fixturePath = new URL("../fixtures/js-ts-workspace", import.meta.url).pathname;
+    try {
+      const subprocess = execa("node", [
+        cliPath,
+        "index",
+        "--workspace",
+        fixturePath,
+        "--repo",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--embedding-provider",
+        "hash",
+        "--json",
+      ], {
+        reject: false,
+      });
+
+      await killAfterFirstProgressLine(subprocess);
+      const result = await subprocess;
+      expect(result.exitCode).not.toBe(0);
+
+      const progress = JSON.parse(await readFile(join(indexPath, "progress", "current.json"), "utf8"));
+      expect(progress).toMatchObject({
+        operation: "index",
+        status: "failed",
+        phase: "failed",
+        errorDetails: {
+          message: expect.stringContaining("SIGTERM"),
+        },
+      });
+
+      const progressResult = await execa("node", [
+        cliPath,
+        "progress",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--json",
+      ]);
+      expect(JSON.parse(progressResult.stdout).writeLock).toMatchObject({
+        status: "unlocked",
+      });
+    } finally {
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("updates a changed fixture repo incrementally through the built CLI", async () => {
     const workspaceRoot = await copyFixtureWorkspace();
     const indexPath = await mkdtemp(join(tmpdir(), "code-intel-cli-update-"));
@@ -383,7 +434,7 @@ describe("code-intel process behavior", () => {
       await rm(workspaceRoot, { recursive: true, force: true });
       await rm(indexPath, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("serializes concurrent CLI reads against the same Ladybug index", async () => {
     const indexPath = await mkdtemp(join(tmpdir(), "code-intel-cli-concurrent-"));
@@ -458,3 +509,20 @@ describe("code-intel process behavior", () => {
     expect(result.stderr).toContain("Expected --direction to be outgoing, incoming, or either");
   });
 });
+
+async function killAfterFirstProgressLine(subprocess: ReturnType<typeof execa>): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for index progress")), 10_000);
+    subprocess.stderr?.on("data", (chunk) => {
+      if (String(chunk).includes("index running")) {
+        clearTimeout(timeout);
+        subprocess.kill("SIGTERM");
+        resolve();
+      }
+    });
+    subprocess.once("exit", () => {
+      clearTimeout(timeout);
+      reject(new Error("Index exited before signal test could interrupt it"));
+    });
+  });
+}

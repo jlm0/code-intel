@@ -1108,3 +1108,33 @@ Planning-doc verification
 - [x] Installed MCP metadata verification passed by launching the configured global CLI entrypoint with an SDK stdio client; `client.getServerVersion()` returned `{"name":"code-intel","version":"0.4.0"}`.
 - [x] Diff whitespace verification passed: `git diff --check`.
 - [x] Package artifact check passed: no root `code-intel-*.tgz` artifact was left behind.
+
+## 2026-05-22 08:19 CDT: Workstream 14 Planning Checkpoint
+
+Reference label: `workstream:generation-publish-reliability`
+
+- [x] Captured `Workstream 14: Generation Publish Reliability And Interrupt Handling` as the next planned workstream in `docs/feature-plan.md`.
+- [x] Updated the progress and publish contract in `docs/feature-spec.md` so generation rebuild substeps, confirmed persisted counters, interrupt handling, write-lock cleanup, and partial-generation classification are explicit requirements.
+- [x] Appended the design-note decision tying this workstream to the 0.4.0 capsule `js-monorepo` proof-run failure: embeddings completed, but the run timed out during final Ladybug generation rebuild before manifest publication.
+- [x] Add RED coverage for Ladybug generation rebuild progress substeps.
+- [x] Add RED CLI process coverage for `SIGINT` or `SIGTERM` during an active index run.
+- [x] Add a large graph-store publish benchmark that isolates Ladybug rebuild from Jina inference.
+- [x] Add SCIP large-shard planning coverage for package/site shards that exceed the default 1 GB child heap.
+- [x] Add counter-clarity coverage for unique embedding inputs versus chunk assignment counts.
+- [x] Add MCP stdio lifecycle coverage that asserts the server process exits after client close.
+
+Implementation evidence:
+
+- [x] Red phase: `npm run test:unit -- tests/unit/scip-shard-planning.test.ts tests/unit/status.test.ts` failed before implementation because `planScipShardsForRepo` was not exported and oversized package shard splitting was absent.
+- [x] Red phase: `npm run test:integration -- tests/integration/progress.test.ts tests/integration/benchmark.test.ts` failed before implementation because graph-store publish progress substeps and `scenarios.graphStorePublish` were absent.
+- [x] Red phase: `npm run test:cli -- tests/cli/process.test.ts` exposed the signal cleanup race: terminal SIGTERM progress could be written while `.index-write.lock` remained as stale local state.
+- [x] Focused unit gate passed: `npm run test:unit -- tests/unit/scip-shard-planning.test.ts tests/unit/status.test.ts` returned 19 files and 76 tests passed.
+- [x] Focused integration gate passed: `npm run test:integration -- tests/integration/progress.test.ts tests/integration/benchmark.test.ts` returned 18 files and 88 tests passed.
+- [x] Focused MCP lifecycle gate passed: `npm run test:mcp -- tests/mcp/server.test.ts` returned 1 file and 3 tests passed.
+- [x] Focused CLI process gate passed: `npm run test:cli -- tests/cli/process.test.ts` returned 1 file and 13 tests passed.
+- [x] Embedding progress telemetry regression passed: `npx vitest run tests/integration/progress.test.ts` returned 1 file and 2 tests passed after adding elapsed and estimated remaining counters.
+- [x] Full suite passed: `npm test` returned 40 files and 185 tests passed.
+- [x] Hash benchmark passed: `node dist/cli/main.js benchmark --suite js-ts-general --embedding-provider hash --skip-mcp-latency --json` returned `ladybugLock.concurrentRead: pass`, `readerDuringUpdate: pass`, `readerAfterPublish: pass`, and `graphStorePublish.failureClassification: none`.
+- [x] Default graph-store publish benchmark scale was 10,000 nodes, 100,000 edges, and 2,000 chunks; output reported schema 67 ms, node writes 3,763 ms, edge writes 163,422 ms, vector index 1,260 ms, close/checkpoint 1,006 ms, publish 2 ms, total 170,683 ms, and peak RSS 78 MB.
+- [x] Diff whitespace verification passed: `git diff --check`.
+- [x] Package dry run passed: `npm pack --dry-run` produced package metadata for 376 files, 325.9 kB package size, and no root `code-intel-*.tgz` artifact remained afterward.

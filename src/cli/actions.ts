@@ -29,6 +29,7 @@ export function createDefaultActions(): CliActions {
         includeIgnored: context.includeIgnored,
         workspaceManifestPath: context.workspaceManifest,
         progress: createCliProgressReporter(context.indexPath, "index", options, runtime),
+        handleProcessSignals: true,
       });
     },
     update: async (options, runtime) => {
@@ -42,6 +43,7 @@ export function createDefaultActions(): CliActions {
         includeIgnored: context.includeIgnored,
         workspaceManifestPath: context.workspaceManifest,
         progress: createCliProgressReporter(context.indexPath, "update", options, runtime),
+        handleProcessSignals: true,
       });
     },
     progress: async (options) => getIndexProgress(options, {

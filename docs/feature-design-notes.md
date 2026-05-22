@@ -2,7 +2,7 @@
 title: Code Intelligence Graph Design Notes
 feature: code-intelligence-graph
 created: 2026-05-13
-last_updated: 2026-05-21
+last_updated: 2026-05-22
 status: active
 ---
 
@@ -719,3 +719,29 @@ Embedding input preparation no longer character-truncates real source. Parsed ch
 Embedding inference now groups missing unique inputs by measured token length before provider calls. This preserves input text, model, normalization, dimensions, and chunk-to-vector assignment while reducing padded-token waste. Progress events, manifests, eval reports, and benchmark reports now expose total unique inputs, duplicate input chunks, token percentiles, max tokens, split counts, truncation fallback counts, batch max tokens, padded-token totals, and padding-waste ratio.
 
 Validation covered both fixture and real-repo paths. Focused hardening tests passed, the full suite passed with 38 files and 181 tests, Jina general eval passed required 33/33, Jina and hash adversarial evals passed required 46/46, target 45/45, and scoreboard 5/5, and the new after-truncation target ranks raw source first while the `.vercel` decoy is absent. A local Jina self-index of this repo completed with 194 files, 1,332 chunks, 1,268 unique inputs, 190 split chunks, token p95 505, max 512, and zero truncation fallbacks.
+
+## 2026-05-22 08:19 CDT: Generation Publish Reliability Workstream
+
+Reference label: `workstream:generation-publish-reliability`
+
+The 0.4.0 capsule `js-monorepo` proof run moved the blocker forward. Discovery, package SCIP, relationship graph construction, and all Jina embeddings completed, but the bounded run timed out during final Ladybug generation rebuild and publish before a manifest was written. That means the index remained unusable even though the expensive embedding phase finished.
+
+The next workstream is `Workstream 14: Generation Publish Reliability And Interrupt Handling`. Its first priority is observability inside `LadybugGraphStore.rebuild()`, because the current `Writing graph generation` progress event is emitted before schema creation, node writes, edge writes, vector-index creation, close/checkpoint, and publish. The reported node and edge counts are planned in-memory graph sizes, not confirmed persisted rows.
+
+The second priority is operational cleanup. A wrapper `SIGINT` currently leaves stale progress, a stale write lock, and partial generation artifacts without a terminal interrupted or cancelled event. The next implementation should handle interrupts and controlled timeouts by closing graph resources, releasing locks, and classifying partial generations as failed local state.
+
+SCIP coverage remains a separate gap. Six large package/site shards still OOM around the default 1 GB child-process heap, so the scalable fix should prefer finer shard planning before raising the default heap. Jina work is no longer the primary blocker for this failure, but tail-batch economics and ambiguous unique-input versus chunk-assignment counters should be cleaned up while the next release hardens publish reliability.
+
+## 2026-05-22 09:25 CDT: Generation Publish Reliability Implemented
+
+`LadybugGraphStore.rebuild()` now emits durable graph-store substeps for schema creation, node writes, edge writes, vector-index creation, and close/checkpoint. Node, edge, chunk, and batch counters are updated only after successful Ladybug write batches, so progress no longer reports planned graph sizes as persisted rows.
+
+Publishing now writes generation-local facts and diagnostics before writing the generation manifest, then publishes the active pointer, then copies the root manifest and workspace convenience files. The active manifest remains the queryable boundary, and failed rebuilds write `failed.json` tombstones into the partial generation directory when possible.
+
+CLI `index` and `update` install signal handlers for `SIGINT` and `SIGTERM`. On termination, they write a terminal failed progress event, close active graph resources, remove `.index-write.lock`, and keep the handler installed until cleanup completes so repeated signals do not fall through to Node's default process kill before lock cleanup.
+
+The benchmark harness now includes a deterministic graph-store publish scenario independent of discovery, SCIP, relationship construction, and embedding inference. The default hash benchmark exercised 10,000 nodes, 100,000 edges, and 2,000 chunk vectors with `failureClassification: none`; the observed time was dominated by edge writes at 163,422 ms out of 170,683 ms total, making the next graph-storage optimization target concrete.
+
+Large package SCIP planning now splits oversized package shards by source root and bounded file groups before raising heap limits. The existing repo-level outside-package shard behavior and cross-shard merge contract remain unchanged.
+
+Embedding progress now reports both unique input counters and chunk assignment counters, plus elapsed and estimated remaining inference time when batch progress can compute it. MCP stdio lifecycle coverage now proves a progress-only session exits promptly after SDK client close so idle query-engine timers or Ladybug handles do not keep the process alive.

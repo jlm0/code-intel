@@ -178,8 +178,13 @@ export const IndexProgressCountersSchema = z.object({
   embeddingBatchPaddedTokens: z.number().int().min(0).optional(),
   embeddingBatchPaddingWasteTokens: z.number().int().min(0).optional(),
   embeddingBatchPaddingWasteRatio: z.number().min(0).optional(),
+  embeddingElapsedMs: z.number().int().min(0).optional(),
+  embeddingEstimatedRemainingMs: z.number().int().min(0).optional(),
   nodesWritten: z.number().int().min(0).optional(),
   edgesWritten: z.number().int().min(0).optional(),
+  chunksWritten: z.number().int().min(0).optional(),
+  nodeWriteBatches: z.number().int().min(0).optional(),
+  edgeWriteBatches: z.number().int().min(0).optional(),
 });
 
 export const IndexProgressEventTypeSchema = z.enum([
@@ -207,6 +212,14 @@ export const IndexProgressStepSchema = z.enum([
   "test-linking",
   "final-call-promotion",
   "embedding-batch",
+  "graph-schema",
+  "graph-node-write",
+  "graph-edge-write",
+  "graph-vector-index",
+  "graph-close",
+  "generation-manifest-write",
+  "active-generation-publish",
+  "root-manifest-copy",
 ]);
 
 export const IndexProgressMemorySchema = z.object({

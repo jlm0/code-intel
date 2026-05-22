@@ -40,6 +40,8 @@ export type EmbeddingBatchProgressUpdate = {
   batchPaddedTokens: number;
   batchPaddingWasteTokens: number;
   batchPaddingWasteRatio: number;
+  embeddingElapsedMs: number;
+  embeddingEstimatedRemainingMs?: number;
 };
 
 export interface EmbedGraphChunksOptions {
@@ -107,16 +109,19 @@ export async function embedGraphChunks(
 
   const embeddingInput = summarizeEmbeddingInputEntries([...allInputs.values()], chunksById);
   const batches = createLengthAwareBatches([...missingInputs.values()], batchSize);
+  const embeddingStartedAt = performance.now();
   let batchesCompleted = 0;
   for (const batch of batches) {
     const progress = await flushMissingInputs(batch, embeddingProvider, embeddingCache, {
       batchIndex: batchesCompleted + 1,
+      totalBatches: batches.length,
       batchesCompleted,
       chunksEmbedded: embedded,
       chunksVisited,
       embeddingInput,
       embeddingInputsMissing: missingInputs.size,
       embeddingInputsReused: allInputs.size - missingInputs.size,
+      embeddingStartedAt,
       onProgress: options.onProgress,
     });
     batchesCompleted += 1;
@@ -132,12 +137,14 @@ async function flushMissingInputs(
   embeddingCache: Map<string, number[]>,
   progress: {
     batchIndex: number;
+    totalBatches: number;
     batchesCompleted: number;
     chunksEmbedded: number;
     chunksVisited: number;
     embeddingInput: EmbeddingInputSummary;
     embeddingInputsMissing: number;
     embeddingInputsReused: number;
+    embeddingStartedAt: number;
     onProgress?: (update: EmbeddingBatchProgressUpdate) => void | Promise<void>;
   },
 ): Promise<{ embedded: number }> {
@@ -152,7 +159,7 @@ async function flushMissingInputs(
     batchesCompleted: progress.batchesCompleted,
     chunksEmbedded: progress.chunksEmbedded,
     chunksVisited: progress.chunksVisited,
-    ...progressFields(progress, batchTelemetry),
+    ...progressFields(progress, batchTelemetry, progress.batchesCompleted),
   });
   const embeddings = await embeddingProvider.embedBatch(
     batch.map((entry) => entry.input),
@@ -167,14 +174,15 @@ async function flushMissingInputs(
       embedded += 1;
     }
   });
+  const completedBatches = progress.batchesCompleted + 1;
   await progress.onProgress?.({
     event: "batch_completed",
     batchIndex: progress.batchIndex,
     batchSize: batch.length,
-    batchesCompleted: progress.batchesCompleted + 1,
+    batchesCompleted: completedBatches,
     chunksEmbedded: progress.chunksEmbedded + embedded,
     chunksVisited: progress.chunksVisited,
-    ...progressFields(progress, batchTelemetry),
+    ...progressFields(progress, batchTelemetry, completedBatches),
   });
   return { embedded };
 }
@@ -288,15 +296,22 @@ function createLengthAwareBatches(entries: EmbeddingInputEntry[], batchSize: num
 
 function progressFields(
   progress: {
+    totalBatches: number;
     embeddingInput: EmbeddingInputSummary;
     embeddingInputsMissing: number;
     embeddingInputsReused: number;
+    embeddingStartedAt: number;
   },
   batchTelemetry: ReturnType<typeof embeddingBatchTelemetry>,
+  batchesCompleted: number,
 ): Omit<
   EmbeddingBatchProgressUpdate,
   "event" | "batchIndex" | "batchSize" | "batchesCompleted" | "chunksEmbedded" | "chunksVisited"
 > {
+  const embeddingElapsedMs = Math.max(0, Math.round(performance.now() - progress.embeddingStartedAt));
+  const embeddingEstimatedRemainingMs = batchesCompleted > 0
+    ? Math.max(0, Math.round((embeddingElapsedMs / batchesCompleted) * (progress.totalBatches - batchesCompleted)))
+    : undefined;
   return {
     embeddingInputsTotal: progress.embeddingInput.inputsTotal,
     embeddingInputsMissing: progress.embeddingInputsMissing,
@@ -311,6 +326,8 @@ function progressFields(
     splitChunks: progress.embeddingInput.splitChunks,
     truncationFallbacks: progress.embeddingInput.truncationFallbacks,
     ...batchTelemetry,
+    embeddingElapsedMs,
+    ...(embeddingEstimatedRemainingMs !== undefined ? { embeddingEstimatedRemainingMs } : {}),
   };
 }
 

@@ -81,6 +81,14 @@ describe("index progress integration", () => {
           "test-linking",
           "final-call-promotion",
           "embedding-batch",
+          "graph-schema",
+          "graph-node-write",
+          "graph-edge-write",
+          "graph-vector-index",
+          "graph-close",
+          "generation-manifest-write",
+          "active-generation-publish",
+          "root-manifest-copy",
         ]),
       );
       expect(progressResult.events).toEqual(
@@ -125,11 +133,37 @@ describe("index progress integration", () => {
               embeddingInputOversized: expect.any(Number),
               embeddingBatchMaxTokens: expect.any(Number),
               embeddingBatchPaddingWasteTokens: expect.any(Number),
+              embeddingElapsedMs: expect.any(Number),
+              embeddingEstimatedRemainingMs: expect.any(Number),
             }),
             memory: expect.objectContaining({
               rssMb: expect.any(Number),
               heapUsedMb: expect.any(Number),
             }),
+          }),
+          expect.objectContaining({
+            event: "step_progress",
+            phase: "graph",
+            currentStep: "graph-node-write",
+            counters: expect.objectContaining({
+              nodesWritten: expect.any(Number),
+              chunksWritten: expect.any(Number),
+              nodeWriteBatches: expect.any(Number),
+            }),
+          }),
+          expect.objectContaining({
+            event: "step_progress",
+            phase: "graph",
+            currentStep: "graph-edge-write",
+            counters: expect.objectContaining({
+              edgesWritten: expect.any(Number),
+              edgeWriteBatches: expect.any(Number),
+            }),
+          }),
+          expect.objectContaining({
+            event: "step_succeeded",
+            phase: "publishing",
+            currentStep: "active-generation-publish",
           }),
         ]),
       );

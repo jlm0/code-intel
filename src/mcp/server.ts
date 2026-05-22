@@ -312,7 +312,30 @@ export async function startMcpServer(options: RuntimeOptions): Promise<void> {
       ), DiagnoseSymbolResultSchema),
   );
 
-  await server.connect(new StdioServerTransport());
+  const transport = new StdioServerTransport();
+  let closingTransport = false;
+  const closeOnStdinClose = () => {
+    void closeTransport();
+  };
+  process.stdin.once("end", closeOnStdinClose);
+  process.stdin.once("close", closeOnStdinClose);
+  transport.onclose = () => {
+    process.stdin.off("end", closeOnStdinClose);
+    process.stdin.off("close", closeOnStdinClose);
+    void closeQueryEngine();
+  };
+  await server.connect(transport);
+
+  async function closeTransport(): Promise<void> {
+    if (closingTransport) {
+      return;
+    }
+    closingTransport = true;
+    process.stdin.off("end", closeOnStdinClose);
+    process.stdin.off("close", closeOnStdinClose);
+    await closeQueryEngine();
+    await transport.close().catch(() => undefined);
+  }
 
   async function withQueryEngine<T>(callback: (engine: QueryEngine) => Promise<T>): Promise<T> {
     if (queryEngineCloseTimer) {

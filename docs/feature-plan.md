@@ -2,7 +2,7 @@
 title: Code Intelligence Graph Feature Plan
 feature: code-intelligence-graph
 created: 2026-05-13
-last_updated: 2026-05-21
+last_updated: 2026-05-22
 status: active
 ---
 
@@ -508,6 +508,107 @@ Completion checkpoint:
 - Eval targets from item 4 pass under Jina and continue to avoid generated-artifact false positives.
 - Hash-backed required gates, Jina-backed semantic gates, and affected OSS/adversarial evals remain green or have documented target-only residuals.
 - Benchmark output shows token counts, split counts, truncation fallback counts, embedding runtime, and peak memory so the runtime tradeoff is measurable.
+
+## Workstream 14: Generation Publish Reliability And Interrupt Handling
+
+Reference label: `workstream:generation-publish-reliability`
+
+This workstream exists because the 0.4.0 `js-monorepo` proof run completed discovery, package SCIP, relationship graph construction, and all Jina embeddings, but failed the 30-minute acceptance gate during final Ladybug generation rebuild and publication before any manifest was published. The next implementation pass should treat a completed manifest as the only usable index boundary and make the final write/publish path observable, cancellable, and benchmarkable.
+
+Implementation status as of 2026-05-22 09:25 CDT: implemented for local graph-store publish reliability, interrupt cleanup, focused graph-store benchmarking, bounded SCIP package shard planning, embedding progress counter clarity, and MCP stdio close lifecycle. A follow-up capsule root proof run is still required before claiming the original `js-monorepo` acceptance gate is closed.
+
+Sequencing:
+
+1. Add Ladybug generation rebuild progress.
+2. Add interrupt and cancellation cleanup.
+3. Add a large graph-store publish benchmark.
+4. Remediate large SCIP shard OOMs.
+5. Tune Jina tail-batch economics and clarify counters.
+6. Add MCP stdio lifecycle regression coverage.
+
+### Item 1: Ladybug Generation Rebuild Progress
+
+Required behaviors:
+
+- Emit durable progress events inside the generation write path for schema setup, node writes, edge writes, vector-index creation, database close or checkpoint, active-pointer publish, and root manifest copy.
+- Report persisted node, edge, and chunk batch counts as confirmed write progress instead of using planned graph sizes as `nodesWritten` and `edgesWritten`.
+- Preserve stdout purity for `--json`; live progress remains stderr, progress artifacts, and MCP `index_progress`.
+
+Completion checkpoint:
+
+- Unit or integration coverage proves the graph-store writer emits ordered rebuild substeps.
+- A large graph-store benchmark can identify whether time is spent in node writes, edge writes, vector-index creation, close/checkpoint, or publish.
+- A failed or interrupted rebuild leaves enough progress evidence to identify the last confirmed write substep.
+
+### Item 2: Interrupt And Cancellation Cleanup
+
+Required behaviors:
+
+- Handle `SIGINT` and `SIGTERM` during `index` and `update` by writing a terminal interrupted, cancelled, or failed progress event before process exit when possible.
+- Close any open Ladybug connection, release the index write lock, and prevent partial generations from being treated as active.
+- Tombstone or clean partial generation directories deterministically enough that the next run and `status` can classify them as failed local state, not a usable index.
+
+Completion checkpoint:
+
+- CLI process coverage proves interrupting an active index writes terminal progress and releases `.index-write.lock`.
+- Status/progress coverage proves a partial generation without a manifest is reported as unusable.
+- The next index attempt can recover without manual lock cleanup.
+
+### Item 3: Large Graph-Store Publish Benchmark
+
+Required behaviors:
+
+- Add a focused benchmark or integration harness that exercises Ladybug rebuild at roughly the 0.4.0 failed-run scale without waiting on Jina inference.
+- The harness should approximate tens of thousands of nodes, hundreds of thousands of edges, and thousands of chunk vectors using deterministic hash or fixture vectors.
+- Report graph-store timings separately from discovery, SCIP, relationship construction, and embedding inference.
+
+Completion checkpoint:
+
+- Benchmark output includes node-write, edge-write, vector-index, close/checkpoint, publish, total rebuild time, peak RSS, and failure classification.
+- The benchmark is cheap enough to run before the next real capsule root attempt.
+- Performance regressions in graph-store publication can be detected without reindexing `js-monorepo`.
+
+### Item 4: Large SCIP Shard OOM Remediation
+
+Required behaviors:
+
+- Investigate package/site shards that still fail `scip-typescript` near the default 1 GB heap limit.
+- Prefer finer shard planning by source root, tsconfig, package sub-area, or bounded file groups before raising the default heap.
+- If a configurable heap override is added, keep the default bounded and surface the override in progress, health, and diagnostics.
+
+Completion checkpoint:
+
+- Focused tests prove SCIP shard planning can split a large package without losing cross-shard reference merging.
+- Failed SCIP shards still produce clear warning diagnostics and Tree-sitter fallback.
+- A follow-up capsule run shows fewer or classified SCIP OOM gaps without returning to one root-wide compiler process.
+
+### Item 5: Jina Tail-Batch Economics And Counter Clarity
+
+Required behaviors:
+
+- Benchmark token-budget and batch-size choices for the slow 512-token tail batches instead of changing the embedding provider.
+- Clarify progress fields so unique embedding inputs and chunk assignments are not confused.
+- Add elapsed-time and estimated-remaining-time telemetry where it can be computed from durable batch progress.
+
+Completion checkpoint:
+
+- Progress distinguishes unique inputs embedded from chunk assignments embedded.
+- Benchmark evidence supports any new default batch-size or token-budget choice.
+- Jina eval results remain equivalent within existing ranking tolerance.
+
+### Item 6: MCP Stdio Lifecycle Regression
+
+Required behaviors:
+
+- Add process-level coverage that an MCP client closing stdin or closing the SDK transport causes `code-intel mcp` to exit.
+- Ensure query-engine reuse timers and Ladybug handles do not keep the server process alive after the transport closes.
+- Keep MCP stdout protocol purity unchanged.
+
+Completion checkpoint:
+
+- MCP tests assert subprocess exit after `client.close()`.
+- No idle MCP process remains after a query or progress-only session.
+- Existing MCP query and progress tools remain green.
 
 ## Rollout Plan
 

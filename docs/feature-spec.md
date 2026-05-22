@@ -2,7 +2,7 @@
 title: Code Intelligence Graph Feature Spec
 feature: code-intelligence-graph
 created: 2026-05-13
-last_updated: 2026-05-21
+last_updated: 2026-05-22
 status: active
 ---
 
@@ -241,9 +241,13 @@ Progress phases stay intentionally coarse: `starting`, `discovering`, `planning`
 
 Every run appends machine-readable events to `<indexPath>/logs/index-<runId>.jsonl`. Events include event type, phase, repo, step, message, timestamps, duration where known, counters, memory RSS and heap usage, bounded error details, discovery summaries, and SCIP quality reports. Step events include `step_started`, `step_progress`, `step_succeeded`, and `step_failed` so long synchronous or future chunked work can leave durable heartbeat evidence. `progress --events` and MCP `index_progress` with `includeEvents` expose bounded recent events. `progress` and `status` also expose `.index-write.lock/owner.json` state so callers can distinguish active work, waiting on a write lock, stale locks, and unlocked state.
 
+Generation rebuild and publish progress is part of the progress contract. The graph-store write path must expose durable substeps for schema setup, node writes, edge writes, vector-index creation, database close or checkpoint, active-pointer publish, and root manifest copy. Counters such as `nodesWritten` and `edgesWritten` should represent confirmed persisted batches, not only planned in-memory graph sizes. A generation is queryable only after the generation manifest is written and the active pointer is published. Partial generation directories without a manifest are failed local state, not an index.
+
+Index and update interruption is also part of the progress contract. When `SIGINT`, `SIGTERM`, or a controlled timeout interrupts a run, the CLI should write a terminal interrupted, cancelled, or failed event when possible, close open graph resources, release write locks, and leave partial generation artifacts classified as unusable. A stale write lock plus missing manifest must never be treated as a usable generation.
+
 SCIP progress must record output bytes, duration, exit code, bounded stdout/stderr summaries, and definition/reference/occurrence counts. A failed SCIP child process must not emit `step_succeeded`; it records warning evidence and falls back to Tree-sitter relationships. `ok: true` with tiny or empty output becomes an explicit `scip-empty-or-tiny` warning and also uses Tree-sitter fallback. Discovery progress must record repo/package summaries, included file counts, tsconfig-excluded file counts, ignored directory counts, unsupported file counts, and included files outside discovered package/source roots. CLI `index` and `update` may emit plain progress lines to stderr for humans, but stdout remains reserved for the final deterministic result. `--quiet` suppresses live progress output.
 
-Embedding progress and diagnostics must report enough token and batch information to explain Jina runtime. Required counters include chunks visited, chunks embedded, reusable embedding inputs, batches completed, current batch size, current batch max tokens, token percentile summaries, oversized source-unit count, structural split count, truncation fallback count, and elapsed inference time where available. A live embedding phase must continue emitting batch or heartbeat evidence so status consumers can distinguish active ONNX inference from a stale or dead writer.
+Embedding progress and diagnostics must report enough token and batch information to explain Jina runtime. Required counters include chunks visited, chunks embedded, reusable embedding inputs, batches completed, current batch size, current batch max tokens, token percentile summaries, oversized source-unit count, structural split count, truncation fallback count, elapsed inference time, and estimated remaining time where available. A live embedding phase must continue emitting batch or heartbeat evidence so status consumers can distinguish active ONNX inference from a stale or dead writer.
 
 ## Concurrency Contract
 

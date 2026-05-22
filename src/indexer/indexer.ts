@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { rmSync } from "node:fs";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,7 +7,7 @@ import { writeJsonAtomically } from "../core/index-artifacts.js";
 import type { IndexProgressReporter, IndexProgressUpdate } from "../core/progress.js";
 import { buildIndexDiagnostics, writeIndexDiagnostics } from "../diagnostics/index-diagnostics.js";
 import { createEdgeId, createStableId } from "../core/ids.js";
-import { LadybugGraphStore } from "../graph/ladybug-store.js";
+import { LadybugGraphStore, type GraphGeneration } from "../graph/ladybug-store.js";
 import {
   schemaVersion,
   type CodeEdge,
@@ -63,6 +64,7 @@ export interface IndexWorkspaceInput {
   allowedHiddenDirectories?: string[];
   workspaceManifestPath?: string;
   progress?: IndexProgressReporter;
+  handleProcessSignals?: boolean;
 }
 
 interface MutableGraph {
@@ -78,6 +80,10 @@ interface BuildIndexWorkspaceOptions {
   previousFacts?: IndexFacts;
 }
 
+interface IndexRunState {
+  registerCleanup(callback: (error: Error) => Promise<void>): () => void;
+}
+
 interface ScipShardPlan {
   id: string;
   kind: "package" | "repo";
@@ -88,51 +94,76 @@ interface ScipShardPlan {
 
 const youngLockAgeMs = 30_000;
 const staleLockAgeMs = 12 * 60 * 60 * 1000;
+const maxScipShardFiles = 350;
 
 export async function indexWorkspace(input: IndexWorkspaceInput): Promise<IndexManifest> {
-  await mkdir(input.indexPath, { recursive: true });
-  const releaseWriteLock = await acquireIndexWriteLock(input.indexPath);
-  try {
-    return await buildIndexWorkspace(input, { mode: "index" });
-  } catch (error) {
-    await reportProgress(input.progress, {
-      status: "failed",
-      phase: "failed",
-      event: "run_failed",
-      message: "Indexing failed",
-      error,
-    });
-    throw error;
-  } finally {
-    await releaseWriteLock();
-  }
+  return runWithIndexWriteLock(input, "index", (runState) =>
+    buildIndexWorkspace(input, { mode: "index" }, runState)
+  );
 }
 
 export async function updateWorkspace(input: IndexWorkspaceInput): Promise<IndexManifest> {
-  await mkdir(input.indexPath, { recursive: true });
-  const releaseWriteLock = await acquireIndexWriteLock(input.indexPath);
-  try {
-    return await buildIndexWorkspace(input, {
+  return runWithIndexWriteLock(input, "update", async (runState) =>
+    buildIndexWorkspace(input, {
       mode: "update",
       previousFacts: await readActiveIndexFacts(input.indexPath),
-    });
+    }, runState)
+  );
+}
+
+async function runWithIndexWriteLock(
+  input: IndexWorkspaceInput,
+  mode: "index" | "update",
+  callback: (runState: IndexRunState) => Promise<IndexManifest>,
+): Promise<IndexManifest> {
+  await mkdir(input.indexPath, { recursive: true });
+  const releaseWriteLock = await acquireIndexWriteLock(input.indexPath);
+  let writeLockReleased = false;
+  const releaseWriteLockOnce = async () => {
+    if (writeLockReleased) {
+      return;
+    }
+    writeLockReleased = true;
+    await releaseWriteLock();
+  };
+  const cleanupCallbacks = new Set<(error: Error) => Promise<void>>();
+  const runState: IndexRunState = {
+    registerCleanup: (callback) => {
+      cleanupCallbacks.add(callback);
+      return () => {
+        cleanupCallbacks.delete(callback);
+      };
+    },
+  };
+  const signalHandlers = input.handleProcessSignals
+    ? installIndexSignalHandlers({
+      input,
+      mode,
+      cleanupCallbacks,
+      releaseWriteLock: releaseWriteLockOnce,
+    })
+    : undefined;
+  try {
+    return await callback(runState);
   } catch (error) {
     await reportProgress(input.progress, {
       status: "failed",
       phase: "failed",
       event: "run_failed",
-      message: "Index update failed",
+      message: mode === "index" ? "Indexing failed" : "Index update failed",
       error,
     });
     throw error;
   } finally {
-    await releaseWriteLock();
+    signalHandlers?.dispose();
+    await releaseWriteLockOnce();
   }
 }
 
 async function buildIndexWorkspace(
   input: IndexWorkspaceInput,
   options: BuildIndexWorkspaceOptions,
+  runState?: IndexRunState,
 ): Promise<IndexManifest> {
   await reportProgress(input.progress, {
     phase: "starting",
@@ -686,6 +717,8 @@ async function buildIndexWorkspace(
           embeddingBatchPaddedTokens: update.batchPaddedTokens,
           embeddingBatchPaddingWasteTokens: update.batchPaddingWasteTokens,
           embeddingBatchPaddingWasteRatio: update.batchPaddingWasteRatio,
+          embeddingElapsedMs: update.embeddingElapsedMs,
+          embeddingEstimatedRemainingMs: update.embeddingEstimatedRemainingMs,
         },
       });
     },
@@ -749,56 +782,67 @@ async function buildIndexWorkspace(
     phase: "graph",
     message: "Writing graph generation",
     counters: {
-      nodesWritten: graph.nodes.size,
-      edgesWritten: graph.edges.size,
       chunksTotal: graph.chunks.size,
     },
   });
-  const store = new LadybugGraphStore(input.indexPath);
-  const generation = await store.rebuild({
-    nodes: graph.nodes,
-    edges: graph.edges,
-    chunksById: graph.chunks,
-    embeddingDimension: embeddingProvider.dimension,
+  const store = new LadybugGraphStore(input.indexPath, { progress: input.progress });
+  const unregisterStoreCleanup = runState?.registerCleanup(async (error) => {
+    await store.tombstoneActiveGeneration(error);
+    await store.close();
   });
-  await reportProgress(input.progress, {
+  let generation: GraphGeneration;
+  try {
+    generation = await store.rebuild({
+      nodes: graph.nodes,
+      edges: graph.edges,
+      chunksById: graph.chunks,
+      embeddingDimension: embeddingProvider.dimension,
+    });
+  } finally {
+    unregisterStoreCleanup?.();
+  }
+  await withProgressStep(input.progress, {
     phase: "publishing",
-    message: "Publishing active generation",
-    counters: {
-      nodesWritten: graph.nodes.size,
-      edgesWritten: graph.edges.size,
-      chunksTotal: graph.chunks.size,
-    },
-  });
-  await writeJsonAtomically(join(generation.generationPath, "manifest.json"), manifest);
-  await writeJsonAtomically(join(generation.generationPath, "workspace.json"), workspace);
-  await writeIndexFacts(generation.generationPath, facts);
-  await writeScipFactsFromRepoFiles(generation.generationPath, {
-    workspace: workspace.workspaceName,
-    generatedAt,
-    repoFactPaths: scipRepoFactPaths,
-  });
-  await writeResolvedModuleFacts(generation.generationPath, {
-    schemaVersion,
-    factsSchemaVersion: resolvedFactsSchemaVersion,
-    workspace: workspace.workspaceName,
-    generatedAt,
-    repos: resolvedFactsByRepo,
-  });
-  await writeIndexDiagnostics(
-    generation.generationPath,
-    buildIndexDiagnostics({
-      workspace,
+    currentStep: "generation-manifest-write",
+    message: "Writing generation manifest and facts",
+  }, async () => {
+    await writeJsonAtomically(join(generation.generationPath, "workspace.json"), workspace);
+    await writeIndexFacts(generation.generationPath, facts);
+    await writeScipFactsFromRepoFiles(generation.generationPath, {
+      workspace: workspace.workspaceName,
       generatedAt,
-      fileFactsByKey: fileFactPlan.fileFactsByKey,
-      scipCountsByFile,
-      nodes: graph.nodes.values(),
-      edges: graph.edges.values(),
-    }),
-  );
-  await store.publishGeneration(generation.generationId);
-  await writeJsonAtomically(join(input.indexPath, "manifest.json"), manifest);
-  await writeJsonAtomically(join(input.indexPath, "workspace.json"), workspace);
+      repoFactPaths: scipRepoFactPaths,
+    });
+    await writeResolvedModuleFacts(generation.generationPath, {
+      schemaVersion,
+      factsSchemaVersion: resolvedFactsSchemaVersion,
+      workspace: workspace.workspaceName,
+      generatedAt,
+      repos: resolvedFactsByRepo,
+    });
+    await writeIndexDiagnostics(
+      generation.generationPath,
+      buildIndexDiagnostics({
+        workspace,
+        generatedAt,
+        fileFactsByKey: fileFactPlan.fileFactsByKey,
+        scipCountsByFile,
+        nodes: graph.nodes.values(),
+        edges: graph.edges.values(),
+      }),
+    );
+    await writeJsonAtomically(join(generation.generationPath, "manifest.json"), manifest);
+  });
+  const publishStats = await store.publishGeneration(generation.generationId);
+  generation.timings.publishMs = publishStats.durationMs;
+  await withProgressStep(input.progress, {
+    phase: "publishing",
+    currentStep: "root-manifest-copy",
+    message: "Copying root manifest",
+  }, async () => {
+    await writeJsonAtomically(join(input.indexPath, "manifest.json"), manifest);
+    await writeJsonAtomically(join(input.indexPath, "workspace.json"), workspace);
+  });
   await reportProgress(input.progress, {
     status: "succeeded",
     phase: "succeeded",
@@ -807,11 +851,67 @@ async function buildIndexWorkspace(
       chunksTotal: graph.chunks.size,
       chunksEmbedded: embedStats.embedded,
       chunksReused: embedStats.reused,
-      nodesWritten: graph.nodes.size,
-      edgesWritten: graph.edges.size,
+      nodesWritten: generation.writeStats.nodesWritten,
+      edgesWritten: generation.writeStats.edgesWritten,
+      chunksWritten: generation.writeStats.chunksWritten,
+      nodeWriteBatches: generation.writeStats.nodeWriteBatches,
+      edgeWriteBatches: generation.writeStats.edgeWriteBatches,
     },
   });
   return manifest;
+}
+
+function installIndexSignalHandlers(input: {
+  input: IndexWorkspaceInput;
+  mode: "index" | "update";
+  cleanupCallbacks: Set<(error: Error) => Promise<void>>;
+  releaseWriteLock: () => Promise<void>;
+}): { dispose: () => void } {
+  let handlingSignal = false;
+  const handler = (signal: NodeJS.Signals) => {
+    if (handlingSignal) {
+      return;
+    }
+    handlingSignal = true;
+    void handleIndexSignal(input, signal);
+  };
+  process.on("SIGINT", handler);
+  process.on("SIGTERM", handler);
+  return {
+    dispose: () => {
+      process.off("SIGINT", handler);
+      process.off("SIGTERM", handler);
+    },
+  };
+}
+
+async function handleIndexSignal(
+  input: {
+    input: IndexWorkspaceInput;
+    mode: "index" | "update";
+    cleanupCallbacks: Set<(error: Error) => Promise<void>>;
+    releaseWriteLock: () => Promise<void>;
+  },
+  signal: NodeJS.Signals,
+): Promise<void> {
+  const error = new Error(`${input.mode === "index" ? "Index" : "Update"} interrupted by ${signal}`);
+  error.name = "IndexInterruptedError";
+  try {
+    await reportProgress(input.input.progress, {
+      status: "failed",
+      phase: "failed",
+      event: "run_failed",
+      message: error.message,
+      error,
+    }).catch(() => undefined);
+    for (const cleanup of [...input.cleanupCallbacks].reverse()) {
+      await cleanup(error).catch(() => undefined);
+    }
+    await input.releaseWriteLock().catch(() => undefined);
+    rmSync(join(input.input.indexPath, ".index-write.lock"), { recursive: true, force: true });
+  } finally {
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  }
 }
 
 async function reportProgress(
@@ -871,7 +971,7 @@ async function withProgressStep<T>(
   }
 }
 
-function planScipShardsForRepo(repo: DiscoveredRepo, indexPath: string): ScipShardPlan[] {
+export function planScipShardsForRepo(repo: DiscoveredRepo, indexPath: string): ScipShardPlan[] {
   const packagesBySpecificity = [...repo.packages].sort((left, right) => right.path.length - left.path.length);
   const filesByPackagePath = new Map(repo.packages.map((pkg) => [pkg.path, [] as string[]]));
   const outsidePackageFiles: string[] = [];
@@ -884,16 +984,17 @@ function planScipShardsForRepo(repo: DiscoveredRepo, indexPath: string): ScipSha
     }
   }
 
-  const shards: ScipShardPlan[] = repo.packages.map((pkg) => {
+  const shards: ScipShardPlan[] = repo.packages.flatMap((pkg) => {
     const id = `package-${pkg.relativePath === "." ? pkg.name : pkg.relativePath}`;
     const includedFiles = filesByPackagePath.get(pkg.path)?.sort() ?? [];
-    return {
+    return packageScipShardPlans({
       id,
-      kind: "package",
-      projectPath: pkg.path,
-      outputPath: scipShardOutputPath(indexPath, repo.name, id),
-      ...(includedFiles.length > 0 ? { includedFiles } : {}),
-    };
+      repoName: repo.name,
+      indexPath,
+      packagePath: pkg.path,
+      sourceRoots: pkg.sourceRoots,
+      includedFiles,
+    });
   });
   if (outsidePackageFiles.length > 0) {
     const id = "repo-root";
@@ -915,6 +1016,66 @@ function planScipShardsForRepo(repo: DiscoveredRepo, indexPath: string): ScipSha
     });
   }
   return shards.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function packageScipShardPlans(input: {
+  id: string;
+  repoName: string;
+  indexPath: string;
+  packagePath: string;
+  sourceRoots: string[];
+  includedFiles: string[];
+}): ScipShardPlan[] {
+  if (input.includedFiles.length <= maxScipShardFiles) {
+    return [{
+      id: input.id,
+      kind: "package",
+      projectPath: input.packagePath,
+      outputPath: scipShardOutputPath(input.indexPath, input.repoName, input.id),
+      ...(input.includedFiles.length > 0 ? { includedFiles: input.includedFiles } : {}),
+    }];
+  }
+
+  const groups = groupFilesBySourceRoot(input.includedFiles, input.sourceRoots, input.packagePath);
+  return groups.flatMap((group) =>
+    chunkArray(group.files, maxScipShardFiles).map((includedFiles, index) => {
+      const shardId = `${input.id}-${group.id}${group.files.length > maxScipShardFiles ? `-${index + 1}` : ""}`;
+      return {
+        id: shardId,
+        kind: "package" as const,
+        projectPath: input.packagePath,
+        outputPath: scipShardOutputPath(input.indexPath, input.repoName, shardId),
+        includedFiles,
+      };
+    })
+  );
+}
+
+function groupFilesBySourceRoot(
+  includedFiles: string[],
+  sourceRoots: string[],
+  packagePath: string,
+): Array<{ id: string; files: string[] }> {
+  const roots = sourceRoots.length > 0 ? sourceRoots : [packagePath];
+  const groups = new Map<string, string[]>();
+  for (const filePath of includedFiles) {
+    const root = roots.find((sourceRoot) => pathStartsWith(filePath, sourceRoot)) ?? packagePath;
+    const id = safePathSegment(root === packagePath ? "package" : root.slice(packagePath.length + 1) || "package");
+    const files = groups.get(id) ?? [];
+    files.push(filePath);
+    groups.set(id, files);
+  }
+  return [...groups.entries()]
+    .map(([id, files]) => ({ id, files: files.sort() }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function pathStartsWith(filePath: string, directoryPath: string): boolean {

@@ -420,6 +420,46 @@ describe("MCP stdio server", () => {
       await rm(indexPath, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("exits promptly when the SDK stdio transport closes after a progress-only session", async () => {
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-mcp-close-"));
+    const transport = new StdioClientTransport({
+      command: "node",
+      args: [
+        cliPath,
+        "mcp",
+        "--workspace",
+        fixturePath,
+        "--index-path",
+        indexPath,
+        "--embedding-provider",
+        "hash",
+      ],
+      cwd: new URL("../..", import.meta.url).pathname,
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "code-intel-close-test", version: "0.1.0" });
+
+    try {
+      await client.connect(transport);
+      const pid = transport.pid;
+      expect(pid).toEqual(expect.any(Number));
+      const progress = await client.callTool({
+        name: "index_progress",
+        arguments: { includeEvents: true, limit: 5 },
+      });
+      expect(parseStructuredTool(progress).tool).toBe("index_progress");
+
+      const closeStart = performance.now();
+      await client.close();
+      const closeMs = performance.now() - closeStart;
+      expect(closeMs).toBeLessThan(1_800);
+      await expect(waitForProcessExit(pid!, 1_000)).resolves.toBeUndefined();
+    } finally {
+      await client.close().catch(() => undefined);
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 function parseStructuredTool(result: {
@@ -457,4 +497,24 @@ function parseToolText(result: { content: Array<{ type: string; text?: string }>
     throw new Error("Tool did not return text content");
   }
   return JSON.parse(text);
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<void> {
+  const startedAt = performance.now();
+  while (performance.now() - startedAt < timeoutMs) {
+    if (!processIsAlive(pid)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Process ${pid} did not exit within ${timeoutMs}ms`);
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 
 import { Connection, Database, type QueryResult as LadybugQueryResult } from "@ladybugdb/core";
 
+import type { IndexProgressReporter, IndexProgressUpdate } from "../core/progress.js";
 import { CodeEdgeSchema, CodeNodeSchema, type CodeEdge, type CodeNode } from "../schema/schemas.js";
 import { cypherValue } from "./cypher.js";
 import type {
@@ -25,6 +26,25 @@ export interface GraphGeneration {
   generationId: string;
   generationPath: string;
   databasePath: string;
+  writeStats: GraphWriteStats;
+  timings: GraphGenerationTimings;
+}
+
+export interface GraphWriteStats {
+  nodesWritten: number;
+  edgesWritten: number;
+  chunksWritten: number;
+  nodeWriteBatches: number;
+  edgeWriteBatches: number;
+}
+
+export interface GraphGenerationTimings {
+  schemaMs: number;
+  nodeWriteMs: number;
+  edgeWriteMs: number;
+  vectorIndexMs: number;
+  closeMs: number;
+  publishMs: number;
 }
 
 export interface LadybugRuntimeStats {
@@ -39,6 +59,7 @@ interface LadybugGraphStoreOptions {
   lockRetryDelayMs?: number;
   openRetryLimit?: number;
   openRetryDelayMs?: number;
+  progress?: IndexProgressReporter;
 }
 
 export interface VectorSearchRow {
@@ -66,6 +87,13 @@ const edgeKinds: CodeEdge["kind"][] = [
   "TESTS",
   "MENTIONS",
 ];
+const emptyWriteStats: GraphWriteStats = {
+  nodesWritten: 0,
+  edgesWritten: 0,
+  chunksWritten: 0,
+  nodeWriteBatches: 0,
+  edgeWriteBatches: 0,
+};
 
 export class LadybugGraphStore implements CodeGraphRepository {
   private databasePath?: string;
@@ -73,6 +101,7 @@ export class LadybugGraphStore implements CodeGraphRepository {
   private connection?: Connection;
   private openPromise?: Promise<void>;
   private hasLock = false;
+  private activeGenerationPath?: string;
   private readonly runtimeStats: LadybugRuntimeStats = {
     lockWaitMs: 0,
     openRetryCount: 0,
@@ -90,27 +119,108 @@ export class LadybugGraphStore implements CodeGraphRepository {
     await this.close();
     const generationId = `${Date.now()}-${randomUUID()}`;
     const generationRoot = join(this.indexPath, "generations", generationId);
+    this.activeGenerationPath = generationRoot;
     this.databasePath = join(generationRoot, legacyDatabaseName);
     await mkdir(generationRoot, { recursive: true });
-    await this.open();
+    const timings: GraphGenerationTimings = {
+      schemaMs: 0,
+      nodeWriteMs: 0,
+      edgeWriteMs: 0,
+      vectorIndexMs: 0,
+      closeMs: 0,
+      publishMs: 0,
+    };
+    let writeStats: GraphWriteStats = { ...emptyWriteStats };
+    let rebuildError: unknown;
     try {
-      await this.createSchema(input.embeddingDimension);
-      await this.createNodes(input.nodes.values(), input.chunksById);
-      await this.createEdges(input.edges.values());
-      await this.createVectorIndex();
+      await this.open();
+      await this.withProgressStep("graph", "graph-schema", "Creating graph schema", async () => {
+        await this.createSchema(input.embeddingDimension);
+      }, (durationMs) => {
+        timings.schemaMs = durationMs;
+      });
+      const nodeStats = await this.withProgressStep("graph", "graph-node-write", "Writing graph nodes", async () =>
+        this.createNodes(input.nodes.values(), input.chunksById, (counters) =>
+          this.reportProgress({
+            phase: "graph",
+            event: "step_progress",
+            currentStep: "graph-node-write",
+            message: "Wrote graph node batch",
+            counters,
+          })
+        ), (durationMs) => {
+          timings.nodeWriteMs = durationMs;
+        });
+      writeStats = { ...writeStats, ...nodeStats };
+      const edgeStats = await this.withProgressStep("graph", "graph-edge-write", "Writing graph edges", async () =>
+        this.createEdges(input.edges.values(), (counters) =>
+          this.reportProgress({
+            phase: "graph",
+            event: "step_progress",
+            currentStep: "graph-edge-write",
+            message: "Wrote graph edge batch",
+            counters,
+          })
+        ), (durationMs) => {
+          timings.edgeWriteMs = durationMs;
+        });
+      writeStats = { ...writeStats, ...edgeStats };
+      await this.withProgressStep("graph", "graph-vector-index", "Creating graph vector index", async () => {
+        await this.createVectorIndex();
+      }, (durationMs) => {
+        timings.vectorIndexMs = durationMs;
+      });
+    } catch (error) {
+      rebuildError = error;
+      await this.tombstoneActiveGeneration(error);
+      throw error;
     } finally {
-      await this.close();
+      try {
+        await this.withProgressStep("graph", "graph-close", "Closing graph database", async () => {
+          await this.close();
+        }, (durationMs) => {
+          timings.closeMs = durationMs;
+        });
+      } catch (error) {
+        if (!rebuildError) {
+          throw error;
+        }
+      } finally {
+        this.activeGenerationPath = undefined;
+      }
     }
     this.databasePath = join(generationRoot, legacyDatabaseName);
     return {
       generationId,
       generationPath: generationRoot,
       databasePath: this.databasePath,
+      writeStats,
+      timings,
     };
   }
 
-  async publishGeneration(generationId: string): Promise<void> {
-    await this.writeActivePointer(generationId);
+  async publishGeneration(generationId: string): Promise<{ durationMs: number }> {
+    let publishMs = 0;
+    await this.withProgressStep("publishing", "active-generation-publish", "Publishing active generation pointer", async () => {
+      await this.writeActivePointer(generationId);
+    }, (durationMs) => {
+      publishMs = durationMs;
+    });
+    return { durationMs: publishMs };
+  }
+
+  async tombstoneActiveGeneration(error: unknown): Promise<void> {
+    if (!this.activeGenerationPath) {
+      return;
+    }
+    await mkdir(this.activeGenerationPath, { recursive: true });
+    await writeFile(
+      join(this.activeGenerationPath, "failed.json"),
+      `${JSON.stringify({
+        failedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      }, null, 2)}\n`,
+    ).catch(() => undefined);
   }
 
   async open(): Promise<void> {
@@ -412,18 +522,32 @@ export class LadybugGraphStore implements CodeGraphRepository {
   private async createNodes(
     nodes: Iterable<CodeNode>,
     chunksById: ReadonlyMap<string, CodeNode & { content: string; embedding: number[] }>,
-  ): Promise<void> {
+    onBatch?: (counters: Partial<GraphWriteStats>) => Promise<void>,
+  ): Promise<Pick<GraphWriteStats, "nodesWritten" | "chunksWritten" | "nodeWriteBatches">> {
+    let nodesWritten = 0;
+    let chunksWritten = 0;
+    let nodeWriteBatches = 0;
     for (const batch of batched(nodes, 200)) {
+      const parsedBatch = batch.map((node) => CodeNodeSchema.parse(node));
       await this.query(`
-        CREATE ${batch
-          .map((node) => CodeNodeSchema.parse(node))
+        CREATE ${parsedBatch
           .map((node) => `(:CodeNode ${cypherMap(nodeValues(node, chunksById.get(node.id)))})`)
           .join(", ")}
       `);
+      nodeWriteBatches += 1;
+      nodesWritten += parsedBatch.length;
+      chunksWritten += parsedBatch.filter((node) => chunksById.has(node.id)).length;
+      await onBatch?.({ nodesWritten, chunksWritten, nodeWriteBatches });
     }
+    return { nodesWritten, chunksWritten, nodeWriteBatches };
   }
 
-  private async createEdges(edges: Iterable<CodeEdge>): Promise<void> {
+  private async createEdges(
+    edges: Iterable<CodeEdge>,
+    onBatch?: (counters: Pick<GraphWriteStats, "edgesWritten" | "edgeWriteBatches">) => Promise<void>,
+  ): Promise<Pick<GraphWriteStats, "edgesWritten" | "edgeWriteBatches">> {
+    let edgesWritten = 0;
+    let edgeWriteBatches = 0;
     for (const batch of batched(edges, 100)) {
       const parsedBatch = batch.map((edge) => CodeEdgeSchema.parse(edge));
       const matches = batch
@@ -449,7 +573,11 @@ export class LadybugGraphStore implements CodeGraphRepository {
         })
         .join(", ");
       await this.query(`MATCH ${matches} CREATE ${creates}`);
+      edgeWriteBatches += 1;
+      edgesWritten += parsedBatch.length;
+      await onBatch?.({ edgesWritten, edgeWriteBatches });
     }
+    return { edgesWritten, edgeWriteBatches };
   }
 
   private async createVectorIndex(): Promise<void> {
@@ -671,6 +799,55 @@ export class LadybugGraphStore implements CodeGraphRepository {
       throw new Error("Ladybug database path is not resolved");
     }
     return `${this.databasePath}.process.lock`;
+  }
+
+  private async withProgressStep<T>(
+    phase: IndexProgressUpdate["phase"],
+    currentStep: NonNullable<IndexProgressUpdate["currentStep"]>,
+    message: string,
+    callback: () => Promise<T>,
+    recordDuration?: (durationMs: number) => void,
+  ): Promise<T> {
+    const startedAt = new Date();
+    await this.reportProgress({
+      phase,
+      event: "step_started",
+      currentStep,
+      startedStepAt: startedAt.toISOString(),
+      message,
+    });
+    try {
+      const result = await callback();
+      const durationMs = Date.now() - startedAt.getTime();
+      recordDuration?.(durationMs);
+      await this.reportProgress({
+        phase,
+        event: "step_succeeded",
+        currentStep,
+        startedStepAt: startedAt.toISOString(),
+        message: `${message} finished`,
+        durationMs,
+      });
+      return result;
+    } catch (error) {
+      const durationMs = Date.now() - startedAt.getTime();
+      recordDuration?.(durationMs);
+      await this.reportProgress({
+        phase,
+        status: "failed",
+        event: "step_failed",
+        currentStep,
+        startedStepAt: startedAt.toISOString(),
+        message: `${message} failed`,
+        durationMs,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  private async reportProgress(update: IndexProgressUpdate): Promise<void> {
+    await this.options.progress?.report(update);
   }
 }
 
