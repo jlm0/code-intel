@@ -638,7 +638,25 @@ async function buildIndexWorkspace(
       chunksTotal: graph.chunks.size,
     },
   });
-  const embedStats = await embedGraphChunks(graph.chunks, embeddingProvider, fileFactPlan.embeddingCache);
+  const embedStats = await embedGraphChunks(graph.chunks, embeddingProvider, fileFactPlan.embeddingCache, {
+    onProgress: async (update) => {
+      await reportProgress(input.progress, {
+        phase: "embeddings",
+        event: "step_progress",
+        currentStep: "embedding-batch",
+        message: update.event === "batch_started"
+          ? `Embedding batch ${update.batchIndex} started`
+          : `Embedding batch ${update.batchIndex} completed`,
+        counters: {
+          chunksTotal: graph.chunks.size,
+          chunksVisited: update.chunksVisited,
+          chunksEmbedded: update.chunksEmbedded,
+          embeddingBatchSize: update.batchSize,
+          embeddingBatchesCompleted: update.batchesCompleted,
+        },
+      });
+    },
+  });
   await reportProgress(input.progress, {
     phase: "embeddings",
     message: "Embedded chunks",

@@ -42,6 +42,72 @@ describe("chunk embeddings", () => {
     expect(duplicateLeft.fact.embedding).toEqual(duplicateLeft.embedding);
     expect(duplicateRight.fact.embedding).toEqual(duplicateRight.embedding);
   });
+
+  it("reports embedding batch progress while missing chunks are embedded", async () => {
+    const first = chunk("first", "First", "first input", "hash-first");
+    const second = chunk("second", "Second", "second input", "hash-second");
+    const third = chunk("third", "Third", "third input", "hash-third");
+    const provider = countingProvider();
+    const progress: Array<{
+      event: string;
+      batchIndex: number;
+      batchSize: number;
+      batchesCompleted: number;
+      chunksEmbedded: number;
+      chunksVisited: number;
+    }> = [];
+
+    await embedGraphChunks(
+      new Map([
+        [first.id, first],
+        [second.id, second],
+        [third.id, third],
+      ]),
+      provider,
+      new Map(),
+      {
+        batchSize: 2,
+        onProgress: (update) => {
+          progress.push(update);
+        },
+      },
+    );
+
+    expect(progress).toEqual([
+      {
+        event: "batch_started",
+        batchIndex: 1,
+        batchSize: 2,
+        batchesCompleted: 0,
+        chunksEmbedded: 0,
+        chunksVisited: 2,
+      },
+      {
+        event: "batch_completed",
+        batchIndex: 1,
+        batchSize: 2,
+        batchesCompleted: 1,
+        chunksEmbedded: 2,
+        chunksVisited: 2,
+      },
+      {
+        event: "batch_started",
+        batchIndex: 2,
+        batchSize: 1,
+        batchesCompleted: 1,
+        chunksEmbedded: 2,
+        chunksVisited: 3,
+      },
+      {
+        event: "batch_completed",
+        batchIndex: 2,
+        batchSize: 1,
+        batchesCompleted: 2,
+        chunksEmbedded: 3,
+        chunksVisited: 3,
+      },
+    ]);
+  });
 });
 
 function chunk(

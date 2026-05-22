@@ -128,8 +128,11 @@ export const IndexProgressCountersSchema = z.object({
   filesDiscovered: z.number().int().min(0).optional(),
   filesParsed: z.number().int().min(0).optional(),
   chunksTotal: z.number().int().min(0).optional(),
+  chunksVisited: z.number().int().min(0).optional(),
   chunksEmbedded: z.number().int().min(0).optional(),
   chunksReused: z.number().int().min(0).optional(),
+  embeddingBatchSize: z.number().int().min(1).optional(),
+  embeddingBatchesCompleted: z.number().int().min(0).optional(),
   nodesWritten: z.number().int().min(0).optional(),
   edgesWritten: z.number().int().min(0).optional(),
 });
@@ -158,6 +161,7 @@ export const IndexProgressStepSchema = z.enum([
   "relationship-graph",
   "test-linking",
   "final-call-promotion",
+  "embedding-batch",
 ]);
 
 export const IndexProgressMemorySchema = z.object({

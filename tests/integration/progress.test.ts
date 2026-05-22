@@ -80,6 +80,7 @@ describe("index progress integration", () => {
           "relationship-graph",
           "test-linking",
           "final-call-promotion",
+          "embedding-batch",
         ]),
       );
       expect(progressResult.events).toEqual(
@@ -106,6 +107,20 @@ describe("index progress integration", () => {
               references: expect.any(Number),
               occurrences: expect.any(Number),
               warnings: expect.any(Array),
+            }),
+          }),
+          expect.objectContaining({
+            event: "step_progress",
+            phase: "embeddings",
+            currentStep: "embedding-batch",
+            counters: expect.objectContaining({
+              embeddingBatchesCompleted: expect.any(Number),
+              chunksVisited: expect.any(Number),
+              chunksEmbedded: expect.any(Number),
+            }),
+            memory: expect.objectContaining({
+              rssMb: expect.any(Number),
+              heapUsedMb: expect.any(Number),
             }),
           }),
         ]),
