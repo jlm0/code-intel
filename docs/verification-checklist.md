@@ -2,7 +2,7 @@
 title: Code Intelligence Graph Verification Checklist
 feature: code-intelligence-graph
 created: 2026-05-13
-last_updated: 2026-05-21
+last_updated: 2026-05-22
 status: active
 ---
 
@@ -1096,3 +1096,15 @@ Planning-doc verification
 - [x] Ignored-doc whitespace verification passed: `awk '/[ \t]$/ { print FILENAME ":" FNR ": trailing whitespace"; bad=1 } END { exit bad }' docs/feature-spec.md docs/feature-plan.md docs/testing-strategy.md docs/adversarial-evals.md docs/feature-design-notes.md docs/verification-checklist.md`.
 - [x] Tracked diff whitespace verification passed: `git diff --check`.
 - [x] Local repo status note: `docs/` is currently ignored by `.gitignore`, so selected workstream docs must be force-added when this implementation is committed.
+
+## 2026-05-22 01:32 CDT: Local 0.4.0 Release
+
+- [x] Version bump applied with `npm run version:bump -- 0.4.0`, updating `package.json` and `package-lock.json`.
+- [x] Local release tests passed through `npm run release:local`: `npm test` returned 38 files passed and 181 tests passed.
+- [x] Local release pack passed through `npm run release:local`: `npm pack --pack-destination .local-releases/v0.4.0` produced `code-intel-0.4.0.tgz` with 376 files and 318.3 kB package size.
+- [x] Global install verification passed through `npm run release:local`, which installed `.local-releases/v0.4.0/code-intel-0.4.0.tgz`.
+- [x] Installed package verification passed: `npm list -g code-intel --depth=0` reports `code-intel@0.4.0`.
+- [x] Installed CLI verification passed: `code-intel --version` and explicit Node launch of the installed CLI both returned `0.4.0`.
+- [x] Installed MCP metadata verification passed by launching the configured global CLI entrypoint with an SDK stdio client; `client.getServerVersion()` returned `{"name":"code-intel","version":"0.4.0"}`.
+- [x] Diff whitespace verification passed: `git diff --check`.
+- [x] Package artifact check passed: no root `code-intel-*.tgz` artifact was left behind.
