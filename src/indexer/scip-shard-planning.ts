@@ -130,19 +130,23 @@ function splitCostedGroup(input: {
   options: PlanScipShardsOptions;
 }): ScipShardPlan[] {
   const sorted = input.files.sort(compareDiscoveredFiles);
-  const historyMatched = sorted.some((file) => failureHistoryMatches(input.repo.name, file.relativePath, input.options.failureHistory));
-  const maxFiles = historyMatched
-    ? Math.max(1, Math.floor(input.policy.legacyMaxFiles / Math.max(1, input.policy.historyPenalty * 100)))
-    : input.policy.legacyMaxFiles;
-  const targetCost = historyMatched
-    ? Math.max(1, Math.floor(input.policy.targetShardCost / Math.max(1, input.policy.historyPenalty * 10)))
-    : input.policy.targetShardCost;
+  const historyByRelativePath = new Map(sorted.map((file) => [
+    file.relativePath,
+    failureHistoryMatches(input.repo.name, file.relativePath, input.options.failureHistory),
+  ]));
+  const maxFiles = input.policy.legacyMaxFiles;
+  const targetCost = input.policy.targetShardCost;
 
   const chunks: DiscoveredFile[][] = [];
   let current: DiscoveredFile[] = [];
   let currentCost = 0;
   for (const file of sorted) {
-    const fileCost = scipFileCost(file, input.options.fileFactsByRelativePath?.get(file.relativePath), historyMatched);
+    const fileCost = scipFileCost(
+      file,
+      input.options.fileFactsByRelativePath?.get(file.relativePath),
+      historyByRelativePath.get(file.relativePath) ?? false,
+      input.policy.historyPenalty,
+    );
     const wouldExceed = current.length > 0 && (current.length >= maxFiles || currentCost + fileCost > targetCost);
     if (wouldExceed) {
       chunks.push(current);
@@ -160,8 +164,14 @@ function splitCostedGroup(input: {
     const shardId = chunks.length === 1 ? input.id : `${input.id}-${index + 1}`;
     const fileCosts = files.map((file) => ({
       absolutePath: file.absolutePath,
-      cost: scipFileCost(file, input.options.fileFactsByRelativePath?.get(file.relativePath), historyMatched),
+      cost: scipFileCost(
+        file,
+        input.options.fileFactsByRelativePath?.get(file.relativePath),
+        historyByRelativePath.get(file.relativePath) ?? false,
+        input.policy.historyPenalty,
+      ),
     })).sort((left, right) => left.absolutePath.localeCompare(right.absolutePath));
+    const chunkHasHistory = files.some((file) => historyByRelativePath.get(file.relativePath));
     return {
       id: safePathSegment(shardId),
       kind: input.kind,
@@ -170,7 +180,7 @@ function splitCostedGroup(input: {
       includedFiles: files.map((file) => file.absolutePath).sort(),
       fileCosts,
       cost: fileCosts.reduce((sum, file) => sum + file.cost, 0),
-      reason: historyMatched ? `${input.reason}:history` : input.reason,
+      reason: chunkHasHistory ? `${input.reason}:history` : input.reason,
       lineage: [safePathSegment(shardId)],
     };
   });
@@ -215,14 +225,19 @@ function groupOutsidePackageFiles(
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function scipFileCost(file: DiscoveredFile, fact: FileFact | undefined, historyMatched: boolean): number {
+function scipFileCost(
+  file: DiscoveredFile,
+  fact: FileFact | undefined,
+  historyMatched: boolean,
+  historyPenalty: number,
+): number {
   const sourceKb = fact ? Math.ceil(fact.fingerprint.size / 1024) : 1;
   const generatedPenalty = file.generated ? 30 : 0;
   const declarationCost = (fact?.declarations.length ?? 0) * 2;
   const importCost = (fact?.imports.length ?? 0) * 2;
   const typeCost = Math.ceil((fact?.typeReferences.length ?? 0) / 2);
   const base = 1 + sourceKb + declarationCost + importCost + typeCost + generatedPenalty;
-  return historyMatched ? base * 4 : base;
+  return historyMatched ? base * Math.max(4, historyPenalty * 10) : base;
 }
 
 function failureHistoryMatches(
@@ -230,11 +245,16 @@ function failureHistoryMatches(
   relativePath: string,
   history: ScipFailureHistoryEntry[] | undefined,
 ): boolean {
-  return (history ?? []).some((entry) =>
-    entry.repo === repo &&
-    entry.failureKind === "oom" &&
-    (relativePath === entry.pathPrefix || relativePath.startsWith(`${entry.pathPrefix.replace(/\/$/, "")}/`))
-  );
+  return (history ?? []).some((entry) => {
+    if (entry.repo !== repo || entry.failureKind !== "oom") {
+      return false;
+    }
+    if (entry.filePaths && entry.filePaths.length > 0) {
+      return entry.filePaths.some((filePath) => normalizeRelativePath(filePath) === relativePath);
+    }
+    const pathPrefix = entry.pathPrefix.replace(/\/$/, "");
+    return relativePath === pathPrefix || relativePath.startsWith(`${pathPrefix}/`);
+  });
 }
 
 function topLevelGroup(relativePath: string): string {

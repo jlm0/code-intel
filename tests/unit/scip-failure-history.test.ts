@@ -27,12 +27,28 @@ describe("SCIP failure history", () => {
       expect(await readScipFailureHistory(indexPath)).toEqual([{
         repo: "repo",
         pathPrefix: "packages/api/src",
+        filePaths: [
+          "packages/api/src/generated-a.ts",
+          "packages/api/src/generated-b.ts",
+        ],
         failureKind: "oom",
         lastFailedAt: "2026-05-23T11:00:00.000Z",
       }]);
     } finally {
       await rm(indexPath, { recursive: true, force: true });
     }
+  });
+
+  it("records exact file paths for single-file failed shards", () => {
+    expect(failureHistoryEntryForShard("repo", "/repo", shardPlan([
+      "/repo/packages/api/src/heavy.ts",
+    ]), "oom", "2026-05-23T12:00:00.000Z")).toEqual({
+      repo: "repo",
+      pathPrefix: "packages/api/src/heavy.ts",
+      filePaths: ["packages/api/src/heavy.ts"],
+      failureKind: "oom",
+      lastFailedAt: "2026-05-23T12:00:00.000Z",
+    });
   });
 });
 

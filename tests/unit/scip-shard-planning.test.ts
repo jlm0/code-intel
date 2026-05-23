@@ -115,6 +115,47 @@ describe("SCIP shard planning", () => {
     );
   });
 
+  it("does not apply single-file OOM history as a whole-source-root one-file split", () => {
+    const repoPath = "/tmp/code-intel-history-scope";
+    const packagePath = join(repoPath, "packages", "api");
+    const files = Array.from({ length: 12 }, (_, index) =>
+      sourceFile(repoPath, `packages/api/src/file-${index}.ts`, "@fixture/api")
+    );
+    const repo: DiscoveredRepo = {
+      name: "history-scope",
+      path: repoPath,
+      relativePath: ".",
+      commit: "test",
+      packageManager: "npm",
+      packages: [{
+        name: "@fixture/api",
+        path: packagePath,
+        relativePath: "packages/api",
+        exports: undefined,
+        dependencies: {},
+        sourceRoots: [join(packagePath, "src")],
+        excludePatterns: [],
+      }],
+      files,
+    };
+
+    const shards = planScipShardsForRepo(repo, "/tmp/code-intel-index", {
+      policy: resolveIndexPolicy({ profile: "balanced" }).scip,
+      failureHistory: [{
+        repo: "history-scope",
+        pathPrefix: "packages/api/src/file-11.ts",
+        filePaths: ["packages/api/src/file-11.ts"],
+        failureKind: "oom",
+        lastFailedAt: "2026-05-23T00:00:00.000Z",
+      }],
+    });
+
+    expect(shards.filter((shard) => (shard.includedFiles?.length ?? 0) === 1)).toHaveLength(0);
+    expect(shards.flatMap((shard) => shard.includedFiles ?? []).sort()).toEqual(
+      files.map((file) => file.absolutePath).sort(),
+    );
+  });
+
   it("does not plan unconstrained SCIP shards for empty packages or empty repos", () => {
     const emptyPackageRepoPath = "/tmp/code-intel-empty-package";
     const packagePath = join(emptyPackageRepoPath, "packages", "empty");

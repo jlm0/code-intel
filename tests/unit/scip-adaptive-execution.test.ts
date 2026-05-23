@@ -112,6 +112,82 @@ describe("adaptive SCIP execution", () => {
       ["/repo/src/a.ts", "/repo/src/b.ts", "/repo/src/c.ts"],
     ]);
   });
+
+  it("sorts costed retry files by descending cost before balancing children", async () => {
+    const policy = resolveIndexPolicy({ profile: "balanced", overrides: { scip: { maxRetrySplits: 1 } } });
+    const shard = {
+      ...shardPlan("costed-heavy-last", [
+        "/repo/src/a.ts",
+        "/repo/src/b.ts",
+        "/repo/src/c.ts",
+        "/repo/src/generated-contracts.ts",
+      ]),
+      fileCosts: [
+        { absolutePath: "/repo/src/a.ts", cost: 10 },
+        { absolutePath: "/repo/src/b.ts", cost: 10 },
+        { absolutePath: "/repo/src/c.ts", cost: 10 },
+        { absolutePath: "/repo/src/generated-contracts.ts", cost: 90 },
+      ],
+    } as ScipShardPlan;
+    const calls: Array<string[] | undefined> = [];
+
+    await executeAdaptiveScipShard({
+      repoPath: "/repo",
+      shard,
+      policy,
+      runScipTypescript: async (input) => {
+        calls.push(input.includedFiles);
+        if (calls.length === 1) {
+          return failed(input, "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory");
+        }
+        return ok(input);
+      },
+    });
+
+    expect(calls.slice(1)).toEqual([
+      ["/repo/src/generated-contracts.ts"],
+      ["/repo/src/a.ts", "/repo/src/b.ts", "/repo/src/c.ts"],
+    ]);
+  });
+
+  it("reports recovered parent OOM attempts that split into successful children", async () => {
+    const policy = resolveIndexPolicy({ profile: "balanced", overrides: { scip: { maxRetrySplits: 1 } } });
+    const shard = shardPlan("recovered-parent", [
+      "/repo/src/a.ts",
+      "/repo/src/b.ts",
+    ]);
+    const splitAttempts: Array<{ failureKind?: string; action?: string; depth?: number; heapMb?: number }> = [];
+
+    const outcomes = await executeAdaptiveScipShard({
+      repoPath: "/repo",
+      shard,
+      policy,
+      onAttempt: async (attempt) => {
+        if (attempt.action === "split") {
+          splitAttempts.push({
+            failureKind: attempt.failureKind,
+            action: attempt.action,
+            depth: attempt.depth,
+            heapMb: attempt.heapMb,
+          });
+        }
+      },
+      runScipTypescript: async (input) => {
+        if ((input.includedFiles?.length ?? 0) > 1) {
+          return failed(input, "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory");
+        }
+        return ok(input);
+      },
+    });
+
+    expect(outcomes.every((outcome) => outcome.status === "succeeded")).toBe(true);
+    expect(splitAttempts).toEqual([{
+      failureKind: "oom",
+      action: "split",
+      depth: 0,
+      heapMb: 1024,
+    }]);
+  });
 });
 
 function shardPlan(id: string, includedFiles: string[]): ScipShardPlan {

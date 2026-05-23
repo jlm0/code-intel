@@ -14,6 +14,7 @@ export interface ExecuteAdaptiveScipShardInput {
   policy: IndexPolicy;
   progress?: IndexProgressReporter;
   runScipTypescript?: (input: RunScipTypescriptInput) => Promise<RunScipTypescriptResult>;
+  onAttempt?: (attempt: AdaptiveScipShardAttempt) => void | Promise<void>;
 }
 
 export interface AdaptiveScipShardOutcome {
@@ -22,6 +23,19 @@ export interface AdaptiveScipShardOutcome {
   status: "succeeded" | "failed";
   failureKind?: ReturnType<typeof classifyScipFailure>;
   retryExhausted?: boolean;
+}
+
+export type AdaptiveScipShardAttemptAction = "succeeded" | "split" | "heap-escalate" | "terminal-failed";
+
+export interface AdaptiveScipShardAttempt {
+  shard: ScipShardPlan;
+  run: RunScipTypescriptResult;
+  status: "succeeded" | "failed";
+  action: AdaptiveScipShardAttemptAction;
+  failureKind?: ReturnType<typeof classifyScipFailure>;
+  retryExhausted?: boolean;
+  depth: number;
+  heapMb: number;
 }
 
 export async function executeAdaptiveScipShard(
@@ -54,6 +68,14 @@ async function executeShard(input: ExecuteAdaptiveScipShardInput & {
   });
 
   if (run.ok) {
+    await input.onAttempt?.({
+      shard: input.shard,
+      run,
+      status: "succeeded",
+      action: "succeeded",
+      depth: input.depth,
+      heapMb: input.heapMb,
+    });
     return [{ shard: input.shard, run, status: "succeeded" }];
   }
 
@@ -63,6 +85,16 @@ async function executeShard(input: ExecuteAdaptiveScipShardInput & {
     files.length > 1 &&
     input.depth < input.policy.scip.maxRetrySplits;
   if (canSplit) {
+    await input.onAttempt?.({
+      shard: input.shard,
+      run,
+      status: "failed",
+      action: "split",
+      failureKind,
+      retryExhausted: false,
+      depth: input.depth,
+      heapMb: input.heapMb,
+    });
     const childFiles = splitRetryFiles(input.shard, files);
     const outcomes: AdaptiveScipShardOutcome[] = [];
     for (const [index, includedFiles] of childFiles.entries()) {
@@ -95,6 +127,16 @@ async function executeShard(input: ExecuteAdaptiveScipShardInput & {
     files.length > 0 &&
     files.length <= input.policy.scip.tinyShardMaxFiles;
   if (canEscalateHeap) {
+    await input.onAttempt?.({
+      shard: input.shard,
+      run,
+      status: "failed",
+      action: "heap-escalate",
+      failureKind,
+      retryExhausted: false,
+      depth: input.depth,
+      heapMb: input.heapMb,
+    });
     return executeShard({
       ...input,
       heapMb: input.policy.scip.tinyShardHeapEscalationMb,
@@ -107,6 +149,16 @@ async function executeShard(input: ExecuteAdaptiveScipShardInput & {
     });
   }
 
+  await input.onAttempt?.({
+    shard: input.shard,
+    run,
+    status: "failed",
+    action: "terminal-failed",
+    failureKind,
+    retryExhausted: true,
+    depth: input.depth,
+    heapMb: input.heapMb,
+  });
   return [{
     shard: input.shard,
     run,
@@ -126,7 +178,11 @@ function splitRetryFiles(shard: ScipShardPlan, files: string[]): string[][] {
   const right: string[] = [];
   let leftCost = 0;
   let rightCost = 0;
-  for (const file of files) {
+  const ordered = [...files].sort((leftFile, rightFile) =>
+    (costByFile.get(rightFile) ?? 1) - (costByFile.get(leftFile) ?? 1) ||
+    leftFile.localeCompare(rightFile)
+  );
+  for (const file of ordered) {
     const cost = costByFile.get(file) ?? 1;
     if (leftCost <= rightCost) {
       left.push(file);

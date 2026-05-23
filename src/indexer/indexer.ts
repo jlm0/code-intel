@@ -33,7 +33,7 @@ import {
   type EmbeddingInputSummary,
 } from "./chunk-embeddings.js";
 import { applyFrameworkGraphFacts } from "./framework-graph.js";
-import { executeAdaptiveScipShard } from "./scip-adaptive-execution.js";
+import { executeAdaptiveScipShard, type ExecuteAdaptiveScipShardInput } from "./scip-adaptive-execution.js";
 import {
   appendScipFailureHistory,
   failureHistoryEntryForShard,
@@ -74,6 +74,7 @@ export interface IndexWorkspaceInput {
   workspaceManifestPath?: string;
   progress?: IndexProgressReporter;
   handleProcessSignals?: boolean;
+  runScipTypescript?: ExecuteAdaptiveScipShardInput["runScipTypescript"];
 }
 
 interface MutableGraph {
@@ -233,7 +234,14 @@ async function buildIndexWorkspace(
   };
   const health: IndexManifest["health"] = [];
   const scipRepoFactPaths: string[] = [];
-  let scipShardsPlanned = 0;
+  let scipInitialShardsPlanned = 0;
+  let scipInitialShardsSucceeded = 0;
+  let scipInitialShardsFailed = 0;
+  let scipShardAttempts = 0;
+  let scipLeafShardsSucceeded = 0;
+  let scipLeafShardsFailed = 0;
+  let scipOomSplits = 0;
+  let scipHeapEscalations = 0;
   const scipCountsByFile = new Map<string, { definitions: number; references: number }>();
   const scipCoverageByFile = new Map<string, ScipFileCoverage>();
   const resolvedFactsByRepo: RepoResolvedModuleFacts[] = [];
@@ -456,7 +464,7 @@ async function buildIndexWorkspace(
       fileFactsByRelativePath,
       failureHistory: scipFailureHistory,
     });
-    scipShardsPlanned += scipShards.length;
+    scipInitialShardsPlanned += scipShards.length;
     const usableScipFacts: ScipFacts[] = [];
     for (const shard of scipShards) {
       recordScipShardPlanned(scipCoverageByFile, repo.name, repo.path, shard);
@@ -467,11 +475,35 @@ async function buildIndexWorkspace(
         currentStep: "scip-run",
         message: `Running SCIP for ${repo.name}:${shard.id}`,
       });
+      const recoveredFailureHistoryEntries: ReturnType<typeof failureHistoryEntryForShard>[] = [];
       const outcomes = await executeAdaptiveScipShard({
         repoPath: repo.path,
         shard,
         policy,
+        runScipTypescript: input.runScipTypescript,
+        onAttempt: async (attempt) => {
+          scipShardAttempts += 1;
+          if (attempt.action === "split" && attempt.failureKind === "oom") {
+            scipOomSplits += 1;
+            recoveredFailureHistoryEntries.push(
+              failureHistoryEntryForShard(repo.name, repo.path, attempt.shard, "oom", new Date().toISOString(), true),
+            );
+          }
+          if (attempt.action === "heap-escalate") {
+            scipHeapEscalations += 1;
+          }
+        },
       });
+      if (recoveredFailureHistoryEntries.length > 0) {
+        await appendScipFailureHistory(input.indexPath, recoveredFailureHistoryEntries);
+      }
+      if (outcomes.some((outcome) => outcome.status === "failed")) {
+        scipInitialShardsFailed += 1;
+      } else {
+        scipInitialShardsSucceeded += 1;
+      }
+      scipLeafShardsSucceeded += outcomes.filter((outcome) => outcome.status === "succeeded").length;
+      scipLeafShardsFailed += outcomes.filter((outcome) => outcome.status === "failed").length;
       for (const outcome of outcomes) {
         const scipRun = outcome.run;
         const outcomeShard = outcome.shard;
@@ -817,8 +849,17 @@ async function buildIndexWorkspace(
       physicalRelationEstimate: relationshipFanOut.logicalEdges * 2,
     },
     scip: {
-      shardsPlanned: scipShardsPlanned,
-      shardsSucceeded: scipRepoFactPaths.length,
+      shardsPlanned: scipInitialShardsPlanned,
+      shardsSucceeded: scipInitialShardsSucceeded,
+      initialShardsPlanned: scipInitialShardsPlanned,
+      initialShardsSucceeded: scipInitialShardsSucceeded,
+      initialShardsFailed: scipInitialShardsFailed,
+      shardAttempts: scipShardAttempts,
+      leafShardsSucceeded: scipLeafShardsSucceeded,
+      leafShardsFailed: scipLeafShardsFailed,
+      oomSplits: scipOomSplits,
+      heapEscalations: scipHeapEscalations,
+      factShardsWritten: scipRepoFactPaths.length,
     },
     incremental: incrementalStats,
     health,

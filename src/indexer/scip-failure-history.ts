@@ -11,8 +11,10 @@ export type ScipFailureKind = "oom" | "timeout" | "oversized-output" | "killed" 
 export interface ScipFailureHistoryEntry {
   repo: string;
   pathPrefix: string;
+  filePaths?: string[];
   failureKind: ScipFailureKind;
   lastFailedAt: string;
+  recovered?: boolean;
 }
 
 interface ScipFailureHistoryFile {
@@ -36,7 +38,7 @@ export async function readScipFailureHistory(indexPath: string): Promise<ScipFai
   if (payload.schemaVersion !== scipFailureHistorySchemaVersion || !Array.isArray(payload.failures)) {
     return [];
   }
-  return payload.failures.filter(isScipFailureHistoryEntry);
+  return payload.failures.filter(isScipFailureHistoryEntry).map(normalizeScipFailureHistoryEntry);
 }
 
 export async function appendScipFailureHistory(
@@ -64,21 +66,32 @@ export function failureHistoryEntryForShard(
   shard: ScipShardPlan,
   failureKind: ScipFailureKind,
   lastFailedAt = new Date().toISOString(),
+  recovered = false,
 ): ScipFailureHistoryEntry {
+  const filePaths = (shard.includedFiles ?? [])
+    .map((file) => relative(repoPath, file).replaceAll("\\", "/"))
+    .filter((file) => file.length > 0)
+    .sort();
   return {
     repo,
-    pathPrefix: commonPathPrefix((shard.includedFiles ?? []).map((file) => relative(repoPath, file))),
+    pathPrefix: filePaths.length === 1 ? filePaths[0] : commonPathPrefix(filePaths),
+    filePaths,
     failureKind,
     lastFailedAt,
+    ...(recovered ? { recovered: true } : {}),
   };
 }
 
 function mergeScipFailureHistory(entries: ScipFailureHistoryEntry[]): ScipFailureHistoryEntry[] {
   const byKey = new Map<string, ScipFailureHistoryEntry>();
-  for (const entry of entries.filter(isScipFailureHistoryEntry)) {
-    const key = `${entry.repo}\0${entry.pathPrefix}\0${entry.failureKind}`;
+  for (const entry of entries.filter(isScipFailureHistoryEntry).map(normalizeScipFailureHistoryEntry)) {
+    const key = `${entry.repo}\0${failureHistoryScopeKey(entry)}\0${entry.failureKind}`;
     const existing = byKey.get(key);
-    if (!existing || existing.lastFailedAt < entry.lastFailedAt) {
+    if (
+      !existing ||
+      existing.lastFailedAt < entry.lastFailedAt ||
+      (existing.lastFailedAt === entry.lastFailedAt && existing.recovered && !entry.recovered)
+    ) {
       byKey.set(key, entry);
     }
   }
@@ -117,13 +130,20 @@ function isScipFailureHistoryEntry(value: unknown): value is ScipFailureHistoryE
     return false;
   }
   const entry = value as Partial<ScipFailureHistoryEntry>;
+  const filePathsValid = entry.filePaths === undefined ||
+    (Array.isArray(entry.filePaths) && entry.filePaths.every((filePath) =>
+      typeof filePath === "string" && filePath.length > 0
+    ));
+  const recoveredValid = entry.recovered === undefined || typeof entry.recovered === "boolean";
   return typeof entry.repo === "string" &&
     entry.repo.length > 0 &&
     typeof entry.pathPrefix === "string" &&
     entry.pathPrefix.length > 0 &&
     isFailureKind(entry.failureKind) &&
     typeof entry.lastFailedAt === "string" &&
-    entry.lastFailedAt.length > 0;
+    entry.lastFailedAt.length > 0 &&
+    filePathsValid &&
+    recoveredValid;
 }
 
 function isFailureKind(value: unknown): value is ScipFailureKind {
@@ -136,4 +156,21 @@ function isFailureKind(value: unknown): value is ScipFailureKind {
 
 function scipFailureHistoryPath(indexPath: string): string {
   return join(indexPath, "scip", "failures.json");
+}
+
+function normalizeScipFailureHistoryEntry(entry: ScipFailureHistoryEntry): ScipFailureHistoryEntry {
+  const filePaths = entry.filePaths
+    ? [...new Set(entry.filePaths.map((filePath) => filePath.replaceAll("\\", "/")).filter(Boolean))].sort()
+    : undefined;
+  return {
+    ...entry,
+    pathPrefix: entry.pathPrefix.replaceAll("\\", "/"),
+    ...(filePaths ? { filePaths } : {}),
+  };
+}
+
+function failureHistoryScopeKey(entry: ScipFailureHistoryEntry): string {
+  return entry.filePaths && entry.filePaths.length > 0
+    ? entry.filePaths.join("\0")
+    : entry.pathPrefix;
 }

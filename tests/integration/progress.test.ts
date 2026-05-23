@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,8 +10,10 @@ import {
   readIndexProgress,
   type IndexProgressReporter,
 } from "../../src/core/progress.js";
+import { resolveIndexPolicy } from "../../src/core/index-policy.js";
 import { readActiveManifest } from "../../src/core/index-artifacts.js";
 import { indexWorkspace, updateWorkspace } from "../../src/indexer/indexer.js";
+import { readScipFailureHistory } from "../../src/indexer/scip-failure-history.js";
 import { copyFixtureWorkspace, mutateFixtureWorkspace } from "../helpers/incremental-fixture.js";
 
 describe("index progress integration", () => {
@@ -172,6 +174,85 @@ describe("index progress integration", () => {
       await rm(indexPath, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("separates initial shard counts from adaptive attempts and leaf outcomes", async () => {
+    const repoPath = await mkdtemp(join(tmpdir(), "code-intel-adaptive-scip-counters-repo-"));
+    const indexPath = await mkdtemp(join(tmpdir(), "code-intel-adaptive-scip-counters-index-"));
+    try {
+      await mkdir(join(repoPath, "src"), { recursive: true });
+      await writeFile(join(repoPath, "package.json"), JSON.stringify({ name: "@fixture/adaptive-counters" }));
+      await writeFile(join(repoPath, "tsconfig.json"), JSON.stringify({ compilerOptions: {} }));
+      await writeFile(join(repoPath, "src", "a.ts"), "export const a = 1;\n");
+      await writeFile(join(repoPath, "src", "b.ts"), "export const b = 2;\n");
+      await writeFile(join(repoPath, "src", "c.ts"), "export const c = 3;\n");
+      let calls = 0;
+
+      const manifest = await indexWorkspace({
+        workspaceRoot: repoPath,
+        repoPaths: [repoPath],
+        indexPath,
+        embeddingProviderName: "hash",
+        policy: resolveIndexPolicy({ profile: "balanced", overrides: { scip: { maxRetrySplits: 1 } } }),
+        runScipTypescript: async (input) => {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              ok: false,
+              outputPath: input.outputPath,
+              outputBytes: 0,
+              durationMs: 10,
+              stdout: "",
+              stderr: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+              exitCode: 1,
+              signal: null,
+              timedOut: false,
+            };
+          }
+          return {
+            ok: false,
+            outputPath: input.outputPath,
+            outputBytes: 0,
+            durationMs: 10,
+            stdout: "",
+            stderr: "scip-typescript timed out after 120000ms",
+            exitCode: 1,
+            signal: null,
+            timedOut: true,
+          };
+        },
+      });
+
+      expect(manifest.scip).toMatchObject({
+        shardsPlanned: 1,
+        shardsSucceeded: 0,
+        initialShardsPlanned: 1,
+        initialShardsSucceeded: 0,
+        initialShardsFailed: 1,
+        shardAttempts: 3,
+        leafShardsSucceeded: 0,
+        leafShardsFailed: 2,
+        oomSplits: 1,
+        heapEscalations: 0,
+      });
+      expect(await readScipFailureHistory(indexPath)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            repo: expect.any(String),
+            failureKind: "oom",
+            recovered: true,
+            filePaths: [
+              "src/a.ts",
+              "src/b.ts",
+              "src/c.ts",
+            ],
+          }),
+        ]),
+      );
+    } finally {
+      await rm(repoPath, { recursive: true, force: true });
+      await rm(indexPath, { recursive: true, force: true });
+    }
+  });
 
   it("records failed update progress without replacing the active generation", async () => {
     const workspaceRoot = await copyFixtureWorkspace();
