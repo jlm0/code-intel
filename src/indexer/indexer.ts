@@ -34,6 +34,11 @@ import {
 } from "./chunk-embeddings.js";
 import { applyFrameworkGraphFacts } from "./framework-graph.js";
 import { executeAdaptiveScipShard } from "./scip-adaptive-execution.js";
+import {
+  appendScipFailureHistory,
+  failureHistoryEntryForShard,
+  readScipFailureHistory,
+} from "./scip-failure-history.js";
 import { planScipShardsForRepo } from "./scip-shard-planning.js";
 import {
   factsSchemaVersion,
@@ -166,6 +171,7 @@ async function buildIndexWorkspace(
     message: `${options.mode === "index" ? "Starting index" : "Starting update"}`,
   });
   const policy = input.policy ?? resolveIndexPolicy({ profile: input.indexProfile });
+  const scipFailureHistory = await readScipFailureHistory(input.indexPath);
   const embeddingProvider =
     input.embeddingProvider ??
     (await createEmbeddingProvider({
@@ -448,6 +454,7 @@ async function buildIndexWorkspace(
     const scipShards = planScipShardsForRepo(repo, input.indexPath, {
       policy: policy.scip,
       fileFactsByRelativePath,
+      failureHistory: scipFailureHistory,
     });
     scipShardsPlanned += scipShards.length;
     const usableScipFacts: ScipFacts[] = [];
@@ -547,6 +554,9 @@ async function buildIndexWorkspace(
           },
         });
         recordScipShardFailed(scipCoverageByFile, repo.name, repo.path, outcomeShard, outcome.failureKind ?? "failed");
+        await appendScipFailureHistory(input.indexPath, [
+          failureHistoryEntryForShard(repo.name, repo.path, outcomeShard, outcome.failureKind ?? "failed"),
+        ]);
         health.push({
           name: `scip:${repo.name}:${outcomeShard.id}`,
           status: "warn",

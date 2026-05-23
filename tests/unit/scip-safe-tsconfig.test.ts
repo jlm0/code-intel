@@ -18,9 +18,13 @@ describe("safe SCIP tsconfig generation", () => {
       compilerOptions: expect.objectContaining({
         noEmit: true,
         declaration: false,
+        declarationMap: false,
         composite: false,
         incremental: false,
         emitDeclarationOnly: false,
+        sourceMap: false,
+        inlineSourceMap: false,
+        disableSourceOfProjectReferenceRedirect: true,
         skipLibCheck: true,
         tsBuildInfoFile: "/tmp/code-intel.tsbuildinfo",
       }),

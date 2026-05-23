@@ -5,6 +5,7 @@ import { resolveIndexPolicy } from "../core/index-policy.js";
 import { normalizeRelativePath } from "../core/ids.js";
 import type { DiscoveredFile, DiscoveredRepo } from "../workspace/discovery.js";
 import type { FileFact } from "./fact-cache.js";
+import type { ScipFailureHistoryEntry } from "./scip-failure-history.js";
 
 export interface ScipShardPlan {
   id: string;
@@ -12,16 +13,15 @@ export interface ScipShardPlan {
   projectPath: string;
   outputPath: string;
   includedFiles?: string[];
+  fileCosts?: ScipShardFileCost[];
   cost?: number;
   reason: string;
   lineage: string[];
 }
 
-export interface ScipFailureHistoryEntry {
-  repo: string;
-  pathPrefix: string;
-  failureKind: "oom" | "timeout" | "oversized-output" | "killed" | "failed";
-  lastFailedAt: string;
+export interface ScipShardFileCost {
+  absolutePath: string;
+  cost: number;
 }
 
 export interface PlanScipShardsOptions {
@@ -86,17 +86,6 @@ export function planScipShardsForRepo(
     }
   }
 
-  if (shards.length === 0) {
-    const id = "repo";
-    shards.push({
-      id,
-      kind: "repo",
-      projectPath: repo.path,
-      outputPath: scipShardOutputPath(indexPath, repo.name, id),
-      reason: "repo",
-      lineage: [id],
-    });
-  }
   return shards.sort((left, right) => left.id.localeCompare(right.id));
 }
 
@@ -111,14 +100,7 @@ function packageScipShardPlans(input: {
   options: PlanScipShardsOptions;
 }): ScipShardPlan[] {
   if (input.includedFiles.length === 0) {
-    return [{
-      id: input.id,
-      kind: "package",
-      projectPath: input.packagePath,
-      outputPath: scipShardOutputPath(input.indexPath, input.repo.name, input.id),
-      reason: "package-empty",
-      lineage: [input.id],
-    }];
+    return [];
   }
   const groups = groupFilesBySourceRoot(input.includedFiles, input.sourceRoots, input.packagePath);
   return groups.flatMap((group) =>
@@ -176,14 +158,18 @@ function splitCostedGroup(input: {
 
   return chunks.map((files, index) => {
     const shardId = chunks.length === 1 ? input.id : `${input.id}-${index + 1}`;
+    const fileCosts = files.map((file) => ({
+      absolutePath: file.absolutePath,
+      cost: scipFileCost(file, input.options.fileFactsByRelativePath?.get(file.relativePath), historyMatched),
+    })).sort((left, right) => left.absolutePath.localeCompare(right.absolutePath));
     return {
       id: safePathSegment(shardId),
       kind: input.kind,
       projectPath: input.projectPath,
       outputPath: scipShardOutputPath(input.indexPath, input.repo.name, shardId),
       includedFiles: files.map((file) => file.absolutePath).sort(),
-      cost: files.reduce((sum, file) =>
-        sum + scipFileCost(file, input.options.fileFactsByRelativePath?.get(file.relativePath), historyMatched), 0),
+      fileCosts,
+      cost: fileCosts.reduce((sum, file) => sum + file.cost, 0),
       reason: historyMatched ? `${input.reason}:history` : input.reason,
       lineage: [safePathSegment(shardId)],
     };

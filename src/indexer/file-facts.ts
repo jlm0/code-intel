@@ -218,7 +218,7 @@ async function splitOversizedChunk(
 ): Promise<SourceChunk[]> {
   const pieces = await splitContentByTokenBudget(chunk, embeddingProvider, tokenBudget);
   if (pieces.length <= 1) {
-    const tokenCount = (await embeddingProvider.countTokens([chunkEmbeddingInput(chunk)]))[0] ?? 0;
+    const tokenCount = (await embeddingProvider.countTokens([sourceChunkEmbeddingInput(chunk)]))[0] ?? 0;
     return [withEmbeddingInput(chunk, {
       tokenCount,
       tokenBudget,
@@ -320,7 +320,7 @@ async function preferredBoundaryEnd(
       continue;
     }
     const content = lines.slice(start, end).join("\n");
-    const tokenCount = (await embeddingProvider.countTokens([chunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
+    const tokenCount = (await embeddingProvider.countTokens([sourceChunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
     if (tokenCount <= tokenBudget) {
       return end;
     }

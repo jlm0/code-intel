@@ -63,11 +63,11 @@ async function executeShard(input: ExecuteAdaptiveScipShardInput & {
     files.length > 1 &&
     input.depth < input.policy.scip.maxRetrySplits;
   if (canSplit) {
-    const midpoint = Math.ceil(files.length / 2);
-    const childFiles = [files.slice(0, midpoint), files.slice(midpoint)].filter((child) => child.length > 0);
+    const childFiles = splitRetryFiles(input.shard, files);
     const outcomes: AdaptiveScipShardOutcome[] = [];
     for (const [index, includedFiles] of childFiles.entries()) {
       const childId = `${input.shard.id}-retry-${input.depth + 1}-${index + 1}`;
+      const fileCosts = costsForFiles(input.shard, includedFiles);
       outcomes.push(
         ...await executeShard({
           ...input,
@@ -77,7 +77,9 @@ async function executeShard(input: ExecuteAdaptiveScipShardInput & {
             id: childId,
             outputPath: input.shard.outputPath.replace(/\.scip$/, `-${input.depth + 1}-${index + 1}.scip`),
             includedFiles,
-            cost: Math.ceil((input.shard.cost ?? includedFiles.length) / childFiles.length),
+            fileCosts,
+            cost: fileCosts?.reduce((sum, file) => sum + file.cost, 0) ??
+              Math.ceil((input.shard.cost ?? includedFiles.length) / childFiles.length),
             reason: `${input.shard.reason}:retry-split`,
             lineage: [...input.shard.lineage, childId],
           },
@@ -112,4 +114,35 @@ async function executeShard(input: ExecuteAdaptiveScipShardInput & {
     failureKind,
     retryExhausted: true,
   }];
+}
+
+function splitRetryFiles(shard: ScipShardPlan, files: string[]): string[][] {
+  if (!shard.fileCosts || shard.fileCosts.length === 0) {
+    const midpoint = Math.ceil(files.length / 2);
+    return [files.slice(0, midpoint), files.slice(midpoint)].filter((child) => child.length > 0);
+  }
+  const costByFile = new Map(shard.fileCosts.map((file) => [file.absolutePath, file.cost]));
+  const left: string[] = [];
+  const right: string[] = [];
+  let leftCost = 0;
+  let rightCost = 0;
+  for (const file of files) {
+    const cost = costByFile.get(file) ?? 1;
+    if (leftCost <= rightCost) {
+      left.push(file);
+      leftCost += cost;
+    } else {
+      right.push(file);
+      rightCost += cost;
+    }
+  }
+  return [left, right].filter((child) => child.length > 0);
+}
+
+function costsForFiles(shard: ScipShardPlan, files: string[]) {
+  if (!shard.fileCosts) {
+    return undefined;
+  }
+  const wanted = new Set(files);
+  return shard.fileCosts.filter((file) => wanted.has(file.absolutePath));
 }

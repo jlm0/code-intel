@@ -75,6 +75,43 @@ describe("adaptive SCIP execution", () => {
       retryExhausted: true,
     });
   });
+
+  it("splits retry children by estimated cost instead of midpoint file count", async () => {
+    const policy = resolveIndexPolicy({ profile: "balanced", overrides: { scip: { maxRetrySplits: 1 } } });
+    const shard = {
+      ...shardPlan("costed", [
+        "/repo/src/generated-contracts.ts",
+        "/repo/src/a.ts",
+        "/repo/src/b.ts",
+        "/repo/src/c.ts",
+      ]),
+      fileCosts: [
+        { absolutePath: "/repo/src/generated-contracts.ts", cost: 90 },
+        { absolutePath: "/repo/src/a.ts", cost: 10 },
+        { absolutePath: "/repo/src/b.ts", cost: 10 },
+        { absolutePath: "/repo/src/c.ts", cost: 10 },
+      ],
+    } as ScipShardPlan;
+    const calls: Array<string[] | undefined> = [];
+
+    await executeAdaptiveScipShard({
+      repoPath: "/repo",
+      shard,
+      policy,
+      runScipTypescript: async (input) => {
+        calls.push(input.includedFiles);
+        if (calls.length === 1) {
+          return failed(input, "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory");
+        }
+        return ok(input);
+      },
+    });
+
+    expect(calls.slice(1)).toEqual([
+      ["/repo/src/generated-contracts.ts"],
+      ["/repo/src/a.ts", "/repo/src/b.ts", "/repo/src/c.ts"],
+    ]);
+  });
 });
 
 function shardPlan(id: string, includedFiles: string[]): ScipShardPlan {

@@ -114,6 +114,40 @@ describe("SCIP shard planning", () => {
       files.map((file) => file.absolutePath).sort(),
     );
   });
+
+  it("does not plan unconstrained SCIP shards for empty packages or empty repos", () => {
+    const emptyPackageRepoPath = "/tmp/code-intel-empty-package";
+    const packagePath = join(emptyPackageRepoPath, "packages", "empty");
+    const emptyPackageRepo: DiscoveredRepo = {
+      name: "empty-package",
+      path: emptyPackageRepoPath,
+      relativePath: ".",
+      commit: "test",
+      packageManager: "npm",
+      packages: [{
+        name: "@fixture/empty",
+        path: packagePath,
+        relativePath: "packages/empty",
+        exports: undefined,
+        dependencies: {},
+        sourceRoots: [join(packagePath, "src")],
+        excludePatterns: [],
+      }],
+      files: [],
+    };
+    const emptyRepo: DiscoveredRepo = {
+      name: "empty-repo",
+      path: "/tmp/code-intel-empty-repo",
+      relativePath: ".",
+      commit: "test",
+      packageManager: "npm",
+      packages: [],
+      files: [],
+    };
+
+    expect(planScipShardsForRepo(emptyPackageRepo, "/tmp/code-intel-index")).toEqual([]);
+    expect(planScipShardsForRepo(emptyRepo, "/tmp/code-intel-index")).toEqual([]);
+  });
 });
 
 function sourceFile(repoPath: string, relativePath: string, packageName: string | undefined) {
