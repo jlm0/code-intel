@@ -1,7 +1,12 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   embedGraphChunks,
+  readDurableEmbeddingCache,
   type EmbeddableChunkNode,
 } from "../../src/indexer/chunk-embeddings.js";
 import { chunkEmbeddingInput } from "../../src/indexer/embedding-input.js";
@@ -178,6 +183,65 @@ describe("chunk embeddings", () => {
         }),
       ]),
     );
+  });
+
+  it("plans batches by padded and total token ceilings before fixed batch size", async () => {
+    const entries = [
+      chunk("one", "One", "a b", "hash-one"),
+      chunk("two", "Two", "a b c", "hash-two"),
+      chunk("three", "Three", "a b c d e", "hash-three"),
+      chunk("four", "Four", "a b c d e f", "hash-four"),
+    ];
+    const provider = countingProvider();
+
+    await embedGraphChunks(
+      new Map(entries.map((entry) => [entry.id, entry])),
+      provider,
+      new Map(),
+      {
+        batchSize: 10,
+        maxBatchTotalTokens: 8,
+        maxBatchPaddedTokens: 18,
+      },
+    );
+
+    expect(provider.batches.map((batch) => batch.length)).toEqual([2, 1, 1]);
+  });
+
+  it("flushes successful embedding batches to a durable provider/model cache", async () => {
+    const first = chunk("durable-first", "DurableFirst", "cache me", "hash-durable-first");
+    const second = chunk("durable-second", "DurableSecond", "cache me too", "hash-durable-second");
+    const provider = countingProvider();
+    const cacheDir = await mkdtemp(join(tmpdir(), "code-intel-embedding-cache-"));
+    const cachePath = join(cacheDir, "cache.json");
+
+    try {
+      await embedGraphChunks(
+        new Map([[first.id, first], [second.id, second]]),
+        provider,
+        new Map(),
+        {
+          batchSize: 1,
+          durableCache: {
+            path: cachePath,
+            provider: provider.provider,
+            model: provider.model,
+            dimension: provider.dimension,
+          },
+        },
+      );
+
+      const durable = await readDurableEmbeddingCache({
+        path: cachePath,
+        provider: provider.provider,
+        model: provider.model,
+        dimension: provider.dimension,
+      });
+      expect(durable.get("hash-durable-first")).toEqual(first.embedding);
+      expect(durable.get("hash-durable-second")).toEqual(second.embedding);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
   });
 });
 

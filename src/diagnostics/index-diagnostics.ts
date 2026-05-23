@@ -1,4 +1,4 @@
-export { buildIndexDiagnostics } from "./build-index-diagnostics.js";
+export { buildIndexDiagnostics, type ScipFileCoverage } from "./build-index-diagnostics.js";
 export { diagnoseIndexedFile, diagnoseIndexedSymbol } from "./diagnose.js";
 export { readActiveIndexDiagnostics, writeIndexDiagnostics } from "./persistence.js";
 export {

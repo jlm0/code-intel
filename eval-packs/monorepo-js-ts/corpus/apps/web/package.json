@@ -1,0 +1,7 @@
+{
+  "name": "@fixture/web",
+  "dependencies": {
+    "@fixture/sdk": "workspace:*",
+    "@fixture/shared": "workspace:*"
+  }
+}

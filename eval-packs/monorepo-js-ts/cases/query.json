@@ -1,0 +1,118 @@
+[
+  {
+    "id": "monorepo.query.sdk-client",
+    "name": "Find SDK client factory",
+    "mode": "find-symbol",
+    "query": "createApiClient",
+    "limit": 10,
+    "gate": {
+      "id": "monorepo.ast.sdk-client",
+      "status": "required",
+      "capability": "function-declaration",
+      "layer": "AST"
+    },
+    "expected": [
+      {
+        "file": "packages/sdk/src/client.ts",
+        "symbol": "createApiClient",
+        "maxRank": 3
+      }
+    ],
+    "failureClassHint": "chunking"
+  },
+  {
+    "id": "monorepo.query.generated-contract",
+    "name": "Semantic generated type contract retrieval",
+    "mode": "semantic",
+    "query": "checkout generated contract state enum",
+    "limit": 10,
+    "gate": {
+      "id": "monorepo.embedding.generated-contract",
+      "status": "required",
+      "capability": "generated-type-contract-recall",
+      "layer": "embedding"
+    },
+    "expected": [
+      {
+        "file": "packages/sdk/types/generated/checkout-contract.d.ts",
+        "maxRank": 5
+      }
+    ],
+    "notExpected": [
+      {
+        "file": "apps/web/src/routes/checkout.test.ts",
+        "maxRank": 1
+      }
+    ],
+    "failureClassHint": "embedding"
+  },
+  {
+    "id": "monorepo.query.route-references-sdk",
+    "name": "Route references SDK factory",
+    "mode": "references",
+    "query": "createApiClient",
+    "limit": 20,
+    "gate": {
+      "id": "monorepo.fusion.path-alias",
+      "status": "required",
+      "capability": "path-alias-reference",
+      "layer": "fusion"
+    },
+    "expected": [
+      {
+        "file": "apps/web/src/routes/checkout.ts",
+        "symbol": "checkoutRouteHandler",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "fusion"
+  },
+  {
+    "id": "monorepo.query.real-runner-path-alias",
+    "name": "SCIP path alias reference from root script",
+    "mode": "references",
+    "query": "sharedFormat",
+    "limit": 20,
+    "gate": {
+      "id": "monorepo.scip.path-alias",
+      "status": "required",
+      "capability": "scip-path-alias-reference",
+      "layer": "SCIP"
+    },
+    "expected": [
+      {
+        "file": "scripts/release.ts",
+        "symbol": "releaseScript",
+        "maxRank": 10
+      }
+    ],
+    "failureClassHint": "scip"
+  },
+  {
+    "id": "monorepo.query.route-ranking",
+    "name": "Route intent ranks route above tests",
+    "mode": "semantic",
+    "query": "checkout route implementation",
+    "limit": 10,
+    "gate": {
+      "id": "monorepo.ranking.route-intent",
+      "status": "required",
+      "capability": "implementation-intent-ranking",
+      "layer": "ranking"
+    },
+    "expected": [
+      {
+        "file": "apps/web/src/routes/checkout.ts",
+        "symbol": "checkoutRouteHandler",
+        "maxRank": 3
+      }
+    ],
+    "notExpected": [
+      {
+        "file": "apps/web/src/routes/checkout.test.ts",
+        "maxRank": 1
+      }
+    ],
+    "failureClassHint": "ranking"
+  }
+]

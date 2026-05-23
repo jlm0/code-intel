@@ -92,6 +92,7 @@ function addCommonOptions(command: Command): void {
     .option("--workspace <path>", "Workspace root path.")
     .option("--repo <path...>", "Repository path to index or query.")
     .option("--index-path <path>", "Index artifact path.")
+    .option("--index-profile <profile>", "Index policy profile: lean, balanced, monorepo, or quality.")
     .option("--workspace-manifest <path>", "Optional code-intel workspace manifest with repository paths.")
     .option("--include-ignored", "Index or search normally ignored generated, build, log, and local-dev paths.", false)
     .option("--embedding-provider <provider>", "Embedding provider: hash or jina.")
@@ -112,6 +113,7 @@ function normalizeOptions(options: Record<string, unknown>): CliOptions {
     workspace: typeof options.workspace === "string" ? options.workspace : undefined,
     repo: Array.isArray(options.repo) ? options.repo.map(String) : undefined,
     indexPath: typeof options.indexPath === "string" ? options.indexPath : undefined,
+    indexProfile: typeof options.indexProfile === "string" ? options.indexProfile : undefined,
     workspaceManifest: typeof options.workspaceManifest === "string" ? options.workspaceManifest : undefined,
     includeIgnored: options.includeIgnored === true,
     embeddingProvider: typeof options.embeddingProvider === "string" ? options.embeddingProvider : undefined,

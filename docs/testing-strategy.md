@@ -384,4 +384,4 @@ The tool should not be used as trusted agent context until these pass:
 - CLI process tests for `health`, `status`, `index`, and at least two query commands.
 - MCP stdio tests for initialization, tool list, `health`, and at least three query tools.
 - End-to-end fixture flow with persisted re-query after database reopen.
-- First proof-of-concept smoke with five expected-answer queries recorded in `verification-checklist.md`.
+- First proof-of-concept smoke with expected-answer queries recorded in the active workstream `validation.md`.

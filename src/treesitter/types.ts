@@ -1,6 +1,10 @@
 export interface ChunkSourceFileInput {
   relativePath: string;
   content: string;
+  policy?: {
+    semanticChunkMode?: "minimal" | "bounded" | "expanded";
+    maxSmallObjectProperties?: number;
+  };
 }
 
 export interface SourceRange {
@@ -13,7 +17,7 @@ export interface SourceRange {
 export interface SourceChunk {
   idSuffix: string;
   name: string;
-  kind: "Function" | "Class" | "Interface" | "TypeAlias" | "Chunk" | "Test";
+  kind: "Function" | "Class" | "Interface" | "TypeAlias" | "Symbol" | "Chunk" | "Test";
   range: SourceRange;
   content: string;
   contentHash: string;
@@ -26,6 +30,8 @@ export interface SourceChunk {
     splitPart?: number;
     splitTotal?: number;
     truncated?: boolean;
+    mode?: "minimal" | "semantic-header";
+    header?: Record<string, string | boolean | undefined>;
   };
 }
 

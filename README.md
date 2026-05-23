@@ -199,4 +199,4 @@ git diff --check
 npm pack --dry-run
 ```
 
-Internal planning and verification notes are not published with the public repository.
+Workstream definitions and validation history live under `.agent-workstream/` when a workstream is created. Use the global workstream creation skills to define workstreams and `$workstream-execution` to implement existing workstreams. Agent workflow guidance lives in `docs/agent-workflows/`.

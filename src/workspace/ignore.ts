@@ -26,6 +26,8 @@ export const defaultIgnoredDirectories = new Set([
 export interface IgnorePolicyOptions {
   includeIgnored?: boolean;
   allowedHiddenDirectories?: string[];
+  generatedSourceMode?: "exclude" | "types-only" | "include";
+  includeBuildArtifacts?: boolean;
 }
 
 export function directoryIsIgnored(
@@ -35,11 +37,29 @@ export function directoryIsIgnored(
   if (options.includeIgnored) {
     return false;
   }
+  if (generatedDirectories.has(name) && options.generatedSourceMode !== undefined && options.generatedSourceMode !== "exclude") {
+    return false;
+  }
+  if (buildArtifactDirectories.has(name) && options.includeBuildArtifacts === true) {
+    return false;
+  }
   if (hiddenDirectoryIsAllowed(name, options.relativePath, options.allowedHiddenDirectories)) {
     return false;
   }
   return defaultIgnoredDirectories.has(name) || hiddenDirectoryIsArtifact(name);
 }
+
+export const generatedDirectories = new Set(["__generated__", "generated"]);
+export const buildArtifactDirectories = new Set([
+  ".next",
+  ".nx",
+  ".turbo",
+  ".vercel",
+  "build",
+  "coverage",
+  "dist",
+  "out",
+]);
 
 export function defaultRipgrepIgnoreGlobs(options: IgnorePolicyOptions = {}): string[] {
   if (options.includeIgnored) {

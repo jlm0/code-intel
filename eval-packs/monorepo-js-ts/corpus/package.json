@@ -1,0 +1,12 @@
+{
+  "name": "monorepo-js-ts-fixture",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "@fixture/sdk": "workspace:*",
+    "@fixture/shared": "workspace:*"
+  }
+}

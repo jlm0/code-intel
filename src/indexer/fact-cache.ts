@@ -23,6 +23,7 @@ import type {
 } from "../treesitter/chunker.js";
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import { fingerprintKey } from "./update-planner.js";
+import type { EmbeddingInputHeader } from "./embedding-input.js";
 
 export const factsSchemaVersion = "code-intel.facts.v2";
 const embeddingFactsSchemaVersion = "code-intel.embeddings.v1";
@@ -30,7 +31,7 @@ const embeddingFactsSchemaVersion = "code-intel.embeddings.v1";
 export interface ChunkFact {
   idSuffix: string;
   name: string;
-  kind: "Function" | "Class" | "Interface" | "TypeAlias" | "Chunk" | "Test";
+  kind: "Function" | "Class" | "Interface" | "TypeAlias" | "Symbol" | "Chunk" | "Test";
   range: {
     startLine: number;
     endLine: number;
@@ -41,6 +42,8 @@ export interface ChunkFact {
   contentHash: string;
   calls: string[];
   embeddingInputHash: string;
+  embeddingInputMode?: "minimal" | "semantic-header";
+  embeddingInputHeader?: EmbeddingInputHeader;
   embeddingInputTokenCount?: number;
   embeddingInputTokenBudget?: number;
   embeddingInputOversized?: boolean;
@@ -98,12 +101,14 @@ interface IndexEmbeddingFacts {
 const ChunkFactSchema = z.object({
   idSuffix: z.string().min(1),
   name: z.string().min(1),
-  kind: z.enum(["Function", "Class", "Interface", "TypeAlias", "Chunk", "Test"]),
+  kind: z.enum(["Function", "Class", "Interface", "TypeAlias", "Symbol", "Chunk", "Test"]),
   range: RangeSchema.required(),
   content: z.string(),
   contentHash: z.string().min(1),
   calls: z.array(z.string()),
   embeddingInputHash: z.string().min(1),
+  embeddingInputMode: z.enum(["minimal", "semantic-header"]).optional(),
+  embeddingInputHeader: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
   embeddingInputTokenCount: z.number().int().min(0).optional(),
   embeddingInputTokenBudget: z.number().int().min(1).optional(),
   embeddingInputOversized: z.boolean().optional(),

@@ -12,7 +12,12 @@ export function summarizeWorkspaceDiscovery(workspace: DiscoveredWorkspace): Ind
       ignoredDirectories: repos.reduce((sum, repo) => sum + repo.ignoredDirectories, 0),
       tsconfigExcludedFiles: repos.reduce((sum, repo) => sum + repo.tsconfigExcludedFiles, 0),
       outsideSourceRootFiles: repos.reduce((sum, repo) => sum + repo.outsideSourceRootFiles, 0),
+      generatedFiles: repos.reduce((sum, repo) => sum + repo.generatedFiles, 0),
+      buildArtifactFiles: repos.reduce((sum, repo) => sum + repo.buildArtifactFiles, 0),
+      generatedBytes: repos.reduce((sum, repo) => sum + repo.generatedBytes, 0),
+      buildArtifactBytes: repos.reduce((sum, repo) => sum + repo.buildArtifactBytes, 0),
     },
+    topExcludedContributors: topExcludedContributors(workspace.diagnostics.files),
     repos,
   };
 }
@@ -31,6 +36,10 @@ function summarizeRepoDiscovery(
     ignoredDirectories: diagnostics.filter((file) => file.reason === "ignored-directory").length,
     tsconfigExcludedFiles: diagnostics.filter((file) => file.reason === "tsconfig-excluded").length,
     outsideSourceRootFiles: repo.files.filter((file) => fileOutsideSourceRoot(file.absolutePath, repo.packages)).length,
+    generatedFiles: diagnostics.filter((file) => file.generated).length,
+    buildArtifactFiles: diagnostics.filter((file) => file.buildArtifact || file.reason === "build-artifact").length,
+    generatedBytes: sumSizes(diagnostics.filter((file) => file.generated)),
+    buildArtifactBytes: sumSizes(diagnostics.filter((file) => file.buildArtifact || file.reason === "build-artifact")),
   };
 }
 
@@ -50,6 +59,32 @@ function summarizePackageDiscovery(
     ).length,
     outsideSourceRootFiles: packageFiles.filter((file) => !pathUnderAnyRoot(file.absolutePath, pkg.sourceRoots)).length,
   };
+}
+
+function sumSizes(diagnostics: DiscoveryFileDiagnostic[]): number {
+  return diagnostics.reduce((sum, diagnostic) => sum + (diagnostic.size ?? 0), 0);
+}
+
+function topExcludedContributors(
+  diagnostics: DiscoveryFileDiagnostic[],
+): Array<{ path: string; reason: string; count: number; bytes: number }> {
+  const groups = new Map<string, { path: string; reason: string; count: number; bytes: number }>();
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.status !== "excluded") {
+      continue;
+    }
+    const path = diagnostic.kind === "directory"
+      ? diagnostic.relativePath
+      : diagnostic.relativePath.split("/").slice(0, -1).join("/") || ".";
+    const key = `${diagnostic.reason}\0${path}`;
+    const group = groups.get(key) ?? { path, reason: diagnostic.reason, count: 0, bytes: 0 };
+    group.count += 1;
+    group.bytes += diagnostic.size ?? 0;
+    groups.set(key, group);
+  }
+  return [...groups.values()]
+    .sort((left, right) => right.count - left.count || right.bytes - left.bytes || left.path.localeCompare(right.path))
+    .slice(0, 10);
 }
 
 function fileOutsideSourceRoot(absolutePath: string, packages: DiscoveredPackage[]): boolean {

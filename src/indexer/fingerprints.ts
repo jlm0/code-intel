@@ -6,6 +6,7 @@ import { normalizeRelativePath } from "../core/ids.js";
 import { schemaVersion, type FileFingerprint } from "../schema/schemas.js";
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import type { DiscoveredFile, DiscoveredRepo, DiscoveredWorkspace } from "../workspace/discovery.js";
+import type { IndexPolicy } from "../core/index-policy.js";
 
 export interface FingerprintedFile {
   discoveredFile: DiscoveredFile;
@@ -39,6 +40,7 @@ export async function calculateConfigHash(input: {
   allowedHiddenDirectories?: string[];
   workspaceManifestPath?: string;
   embeddingProvider: EmbeddingProvider;
+  policy?: IndexPolicy;
 }): Promise<string> {
   const hash = createHash("sha256");
   hash.update(schemaVersion);
@@ -51,6 +53,7 @@ export async function calculateConfigHash(input: {
       model: input.embeddingProvider.model,
       dimension: input.embeddingProvider.dimension,
     },
+    policy: input.policy ?? null,
   }));
 
   const configPaths = new Set<string>();

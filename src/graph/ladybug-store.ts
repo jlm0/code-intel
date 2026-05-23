@@ -20,6 +20,9 @@ export interface GraphWriteInput {
   edges: ReadonlyMap<string, CodeEdge>;
   chunksById: ReadonlyMap<string, CodeNode & { content: string; embedding: number[] }>;
   embeddingDimension: number;
+  relationMode?: "typed-and-relates";
+  nodeBatchSize?: number;
+  edgeBatchSize?: number;
 }
 
 export interface GraphGeneration {
@@ -33,6 +36,7 @@ export interface GraphGeneration {
 export interface GraphWriteStats {
   nodesWritten: number;
   edgesWritten: number;
+  physicalEdgesWritten: number;
   chunksWritten: number;
   nodeWriteBatches: number;
   edgeWriteBatches: number;
@@ -90,6 +94,7 @@ const edgeKinds: CodeEdge["kind"][] = [
 const emptyWriteStats: GraphWriteStats = {
   nodesWritten: 0,
   edgesWritten: 0,
+  physicalEdgesWritten: 0,
   chunksWritten: 0,
   nodeWriteBatches: 0,
   edgeWriteBatches: 0,
@@ -140,7 +145,7 @@ export class LadybugGraphStore implements CodeGraphRepository {
         timings.schemaMs = durationMs;
       });
       const nodeStats = await this.withProgressStep("graph", "graph-node-write", "Writing graph nodes", async () =>
-        this.createNodes(input.nodes.values(), input.chunksById, (counters) =>
+        this.createNodes(input.nodes.values(), input.chunksById, input.nodeBatchSize, (counters) =>
           this.reportProgress({
             phase: "graph",
             event: "step_progress",
@@ -153,7 +158,7 @@ export class LadybugGraphStore implements CodeGraphRepository {
         });
       writeStats = { ...writeStats, ...nodeStats };
       const edgeStats = await this.withProgressStep("graph", "graph-edge-write", "Writing graph edges", async () =>
-        this.createEdges(input.edges.values(), (counters) =>
+        this.createEdges(input.edges.values(), input.edgeBatchSize, input.relationMode ?? "typed-and-relates", (counters) =>
           this.reportProgress({
             phase: "graph",
             event: "step_progress",
@@ -522,12 +527,13 @@ export class LadybugGraphStore implements CodeGraphRepository {
   private async createNodes(
     nodes: Iterable<CodeNode>,
     chunksById: ReadonlyMap<string, CodeNode & { content: string; embedding: number[] }>,
+    batchSize = 200,
     onBatch?: (counters: Partial<GraphWriteStats>) => Promise<void>,
   ): Promise<Pick<GraphWriteStats, "nodesWritten" | "chunksWritten" | "nodeWriteBatches">> {
     let nodesWritten = 0;
     let chunksWritten = 0;
     let nodeWriteBatches = 0;
-    for (const batch of batched(nodes, 200)) {
+    for (const batch of batched(nodes, batchSize)) {
       const parsedBatch = batch.map((node) => CodeNodeSchema.parse(node));
       await this.query(`
         CREATE ${parsedBatch
@@ -544,11 +550,14 @@ export class LadybugGraphStore implements CodeGraphRepository {
 
   private async createEdges(
     edges: Iterable<CodeEdge>,
-    onBatch?: (counters: Pick<GraphWriteStats, "edgesWritten" | "edgeWriteBatches">) => Promise<void>,
-  ): Promise<Pick<GraphWriteStats, "edgesWritten" | "edgeWriteBatches">> {
+    batchSize = 100,
+    relationMode: "typed-and-relates" = "typed-and-relates",
+    onBatch?: (counters: Pick<GraphWriteStats, "edgesWritten" | "physicalEdgesWritten" | "edgeWriteBatches">) => Promise<void>,
+  ): Promise<Pick<GraphWriteStats, "edgesWritten" | "physicalEdgesWritten" | "edgeWriteBatches">> {
     let edgesWritten = 0;
+    let physicalEdgesWritten = 0;
     let edgeWriteBatches = 0;
-    for (const batch of batched(edges, 100)) {
+    for (const batch of batched(edges, batchSize)) {
       const parsedBatch = batch.map((edge) => CodeEdgeSchema.parse(edge));
       const matches = batch
         .map(
@@ -575,9 +584,10 @@ export class LadybugGraphStore implements CodeGraphRepository {
       await this.query(`MATCH ${matches} CREATE ${creates}`);
       edgeWriteBatches += 1;
       edgesWritten += parsedBatch.length;
-      await onBatch?.({ edgesWritten, edgeWriteBatches });
+      physicalEdgesWritten += parsedBatch.length * 2;
+      await onBatch?.({ edgesWritten, physicalEdgesWritten, edgeWriteBatches });
     }
-    return { edgesWritten, edgeWriteBatches };
+    return { edgesWritten, physicalEdgesWritten, edgeWriteBatches };
   }
 
   private async createVectorIndex(): Promise<void> {

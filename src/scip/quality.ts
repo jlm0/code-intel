@@ -7,7 +7,10 @@ const tinyScipBytes = 128;
 const maxSummaryBytes = 1024;
 
 export function createScipQualityReport(
-  run: Pick<RunScipTypescriptResult, "ok" | "outputBytes" | "durationMs" | "exitCode" | "stdout" | "stderr">,
+  run: Pick<RunScipTypescriptResult, "ok" | "outputBytes" | "durationMs" | "exitCode" | "stdout" | "stderr"> & {
+    timedOut?: boolean;
+    signal?: NodeJS.Signals | null;
+  },
   facts: Pick<ScipFacts, "definitions" | "references" | "occurrences">,
 ): IndexProgressScipQuality {
   const warnings: string[] = [];
@@ -16,7 +19,7 @@ export function createScipQualityReport(
     warnings.push("scip-empty-or-tiny");
   }
   if (!run.ok) {
-    warnings.push("scip-typescript-failed");
+    warnings.push(`scip-${classifyScipFailure(run)}`);
   }
 
   return {
@@ -30,6 +33,33 @@ export function createScipQualityReport(
     stderrSummary: summarizeOutput(run.stderr),
     warnings,
   };
+}
+
+export function classifyScipFailure(
+  run: Pick<RunScipTypescriptResult, "ok" | "stderr" | "exitCode"> & {
+    timedOut?: boolean;
+    signal?: NodeJS.Signals | null;
+    outputBytes?: number;
+  },
+): "oom" | "timeout" | "oversized-output" | "killed" | "failed" {
+  if (run.ok) {
+    return "failed";
+  }
+  if (run.timedOut || /timed out/i.test(run.stderr)) {
+    return "timeout";
+  }
+  if (/output file exceeded/i.test(run.stderr)) {
+    return "oversized-output";
+  }
+  if (
+    /heap out of memory|allocation failed|reached heap limit|javascript heap/i.test(run.stderr)
+  ) {
+    return "oom";
+  }
+  if (run.signal === "SIGKILL" || run.signal === "SIGTERM" || run.exitCode === 137 || run.exitCode === 143) {
+    return "killed";
+  }
+  return "failed";
 }
 
 function summarizeOutput(output: string): string | undefined {

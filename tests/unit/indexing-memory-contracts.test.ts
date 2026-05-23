@@ -23,7 +23,7 @@ describe("indexing memory source contracts", () => {
 
   it("does not record a failed SCIP child process as step_succeeded before checking ok", async () => {
     const indexer = await source("src/indexer/indexer.ts");
-    const scipRunIndex = indexer.indexOf("const scipRun = await runScipTypescript");
+    const scipRunIndex = indexer.indexOf("const outcomes = await executeAdaptiveScipShard");
     const successEventIndex = indexer.indexOf('event: "step_succeeded"', scipRunIndex);
     const okCheckIndex = indexer.indexOf("if (scipRun.ok)", scipRunIndex);
 

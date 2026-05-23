@@ -96,6 +96,27 @@ describe("createCliProgram", () => {
     );
   });
 
+  it("delegates index profile options to injected index handlers", async () => {
+    const index = vi.fn(async () => ({ ok: true }));
+    const program = createCliProgram({
+      actions: { index },
+      stdout: { write: vi.fn() },
+      stderr: { write: vi.fn() },
+    });
+
+    await program.parseAsync(["node", "code-intel", "index", "--json", "--index-profile", "monorepo"], {
+      from: "node",
+    });
+
+    expect(index).toHaveBeenCalledWith(
+      expect.objectContaining({ json: true, indexProfile: "monorepo" }),
+      expect.objectContaining({
+        stderr: expect.any(Object),
+        stdout: expect.any(Object),
+      }),
+    );
+  });
+
   it("delegates relationship browsing with edge-kind and direction options", async () => {
     const relationships = vi.fn(async () => ({ ok: true }));
     const program = createCliProgram({

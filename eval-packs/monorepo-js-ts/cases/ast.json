@@ -1,0 +1,20 @@
+[
+  {
+    "id": "monorepo.ast.generated-contracts",
+    "name": "Generated contract declarations are chunkable",
+    "file": "packages/sdk/types/generated/checkout-contract.d.ts",
+    "gate": {
+      "id": "monorepo.ast.generated-contracts",
+      "status": "required",
+      "capability": "generated-type-contract-ast",
+      "layer": "AST"
+    },
+    "expected": {
+      "declarations": [
+        { "name": "CheckoutState", "kind": "Enum" },
+        { "name": "GeneratedCheckoutContract", "kind": "Interface" },
+        { "name": "CheckoutNamespace", "kind": "Namespace" }
+      ]
+    }
+  }
+]

@@ -18,6 +18,8 @@ export interface RunScipTypescriptInput {
   timeoutMs?: number;
   maxOutputBytes?: number;
   maxScipBytes?: number;
+  safeTsconfig?: boolean;
+  projectReferencesEnabled?: boolean;
 }
 
 export interface RunScipTypescriptResult {
@@ -28,6 +30,7 @@ export interface RunScipTypescriptResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  signal: NodeJS.Signals | null;
   timedOut: boolean;
 }
 
@@ -85,7 +88,7 @@ export async function runScipTypescript(
       if (hardKillTimeout) clearTimeout(hardKillTimeout);
       cleanupPreparedScipProject(preparedProject).finally(() => rejectPromise(error));
     });
-    child.on("close", async (exitCode) => {
+    child.on("close", async (exitCode, signal) => {
       clearTimeout(timeout);
       if (hardKillTimeout) clearTimeout(hardKillTimeout);
       const scipSize = await outputFileSize(input.outputPath);
@@ -105,6 +108,7 @@ export async function runScipTypescript(
             maxOutputBytes,
           ),
           exitCode,
+          signal,
           timedOut,
         });
         return;
@@ -118,6 +122,7 @@ export async function runScipTypescript(
         stdout,
         stderr: timedOut ? appendBounded(stderr, `\nscip-typescript timed out after ${timeoutMs}ms`, maxOutputBytes) : stderr,
         exitCode,
+        signal,
         timedOut,
       });
     });
@@ -149,14 +154,24 @@ async function prepareScipProject(input: RunScipTypescriptInput): Promise<Prepar
         includedFiles: input.includedFiles,
         ensureScratchRoot,
         baseConfigPath: repoConfigPath,
+        safeTsconfig: input.safeTsconfig,
+        projectReferencesEnabled: input.projectReferencesEnabled,
       }),
       cleanup: () => scratchRoot ? rm(scratchRoot, { recursive: true, force: true }) : Promise.resolve(),
     };
   }
 
   if (input.includedFiles && input.includedFiles.length > 0) {
-    const configPath = join(await ensureScratchRoot(), "tsconfig.json");
-    const inferredConfig = await inferredTsconfig(input.repoPath, repoConfigPath, input.includedFiles);
+    const scratchDirectory = await ensureScratchRoot();
+    const configPath = join(scratchDirectory, "tsconfig.json");
+    const inferredConfig = await inferredTsconfig({
+      repoPath: input.repoPath,
+      baseConfigPath: repoConfigPath,
+      includedFiles: input.includedFiles,
+      safeTsconfig: input.safeTsconfig,
+      projectReferencesEnabled: input.projectReferencesEnabled,
+      tsBuildInfoFile: join(scratchDirectory, "code-intel.tsbuildinfo"),
+    });
     await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
     return {
       project: configPath,
@@ -171,8 +186,14 @@ async function prepareScipProject(input: RunScipTypescriptInput): Promise<Prepar
     return { cleanup: async () => {} };
   }
 
-  const inferredConfig = await inferredTsconfig(input.repoPath);
-  const configPath = join(await ensureScratchRoot(), "tsconfig.json");
+  const scratchDirectory = await ensureScratchRoot();
+  const inferredConfig = await inferredTsconfig({
+    repoPath: input.repoPath,
+    safeTsconfig: input.safeTsconfig,
+    projectReferencesEnabled: input.projectReferencesEnabled,
+    tsBuildInfoFile: join(scratchDirectory, "code-intel.tsbuildinfo"),
+  });
+  const configPath = join(scratchDirectory, "tsconfig.json");
   await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
   return {
     project: configPath,
@@ -186,13 +207,22 @@ async function preparedProjectPath(input: {
   includedFiles: string[] | undefined;
   ensureScratchRoot: () => Promise<string>;
   baseConfigPath: string | undefined;
+  safeTsconfig?: boolean;
+  projectReferencesEnabled?: boolean;
 }): Promise<string> {
   if (input.includedFiles && input.includedFiles.length > 0) {
     const projectRoot = await projectRootPath(input.projectPath);
     const scratchRoot = await input.ensureScratchRoot();
     const configPath = join(scratchRoot, safeProjectConfigName(projectRoot));
     const projectConfigPath = await existingProjectConfigPath(input.projectPath);
-    const inferredConfig = await inferredTsconfig(projectRoot, projectConfigPath ?? input.baseConfigPath, input.includedFiles);
+    const inferredConfig = await inferredTsconfig({
+      repoPath: projectRoot,
+      baseConfigPath: projectConfigPath ?? input.baseConfigPath,
+      includedFiles: input.includedFiles,
+      safeTsconfig: input.safeTsconfig,
+      projectReferencesEnabled: input.projectReferencesEnabled,
+      tsBuildInfoFile: join(scratchRoot, "code-intel.tsbuildinfo"),
+    });
     await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
     return configPath;
   }
@@ -208,7 +238,13 @@ async function preparedProjectPath(input: {
   const projectRoot = await projectRootPath(projectPath);
   const scratchRoot = await input.ensureScratchRoot();
   const configPath = join(scratchRoot, safeProjectConfigName(projectRoot));
-  const inferredConfig = await inferredTsconfig(projectRoot, input.baseConfigPath);
+  const inferredConfig = await inferredTsconfig({
+    repoPath: projectRoot,
+    baseConfigPath: input.baseConfigPath,
+    safeTsconfig: input.safeTsconfig,
+    projectReferencesEnabled: input.projectReferencesEnabled,
+    tsBuildInfoFile: join(scratchRoot, "code-intel.tsbuildinfo"),
+  });
   await writeFile(configPath, `${JSON.stringify(inferredConfig, null, 2)}\n`);
   return configPath;
 }
@@ -239,40 +275,88 @@ function safeProjectConfigName(projectRoot: string): string {
   return `${projectRoot.replace(/[^A-Za-z0-9_.-]/g, "_")}.tsconfig.json`;
 }
 
-async function inferredTsconfig(
-  repoPath: string,
-  baseConfigPath?: string,
-  includedFiles?: string[],
-): Promise<Record<string, unknown>> {
-  const allowJs = await shouldAllowJs(repoPath);
-  const uniqueIncludedFiles = [...new Set(includedFiles ?? [])].sort();
+async function inferredTsconfig(input: {
+  repoPath: string;
+  baseConfigPath?: string;
+  includedFiles?: string[];
+  safeTsconfig?: boolean;
+  projectReferencesEnabled?: boolean;
+  tsBuildInfoFile?: string;
+}): Promise<Record<string, unknown>> {
+  const allowJs = await shouldAllowJs(input.repoPath);
+  const uniqueIncludedFiles = [...new Set(input.includedFiles ?? [])].sort();
   const include = uniqueIncludedFiles.length > 0
     ? undefined
     : [
-      ...absoluteGlobs(repoPath, ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"]),
-      ...(allowJs ? absoluteGlobs(repoPath, ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]) : []),
+      ...absoluteGlobs(input.repoPath, ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"]),
+      ...(allowJs ? absoluteGlobs(input.repoPath, ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]) : []),
     ];
-  const compilerOptions: Record<string, unknown> = allowJs ? { allowJs: true, checkJs: false } : {};
+  const safeConfig = createSafeScipTsconfig({
+    repoPath: input.repoPath,
+    baseConfigPath: input.baseConfigPath,
+    includedFiles: uniqueIncludedFiles,
+    allowJs,
+    projectReferencesEnabled: input.projectReferencesEnabled === true,
+    tsBuildInfoFile: input.tsBuildInfoFile,
+  });
+  if (input.safeTsconfig === false) {
+    return {
+      ...(input.baseConfigPath ? { extends: input.baseConfigPath } : {}),
+      compilerOptions: allowJs ? { allowJs: true, checkJs: false } : {},
+      ...(uniqueIncludedFiles.length > 0 ? { files: uniqueIncludedFiles } : { include }),
+      exclude: defaultScipExcludeGlobs(input.repoPath),
+    };
+  }
   return {
-    ...(baseConfigPath ? { extends: baseConfigPath } : {}),
-    compilerOptions,
+    ...safeConfig,
     ...(uniqueIncludedFiles.length > 0 ? { files: uniqueIncludedFiles } : { include }),
-    exclude: absoluteGlobs(repoPath, [
-      "node_modules/**",
-      "bower_components/**",
-      "jspm_packages/**",
-      ".git/**",
-      ".next/**",
-      ".turbo/**",
-      ".yarn/**",
-      "__generated__/**",
-      "dist/**",
-      "generated/**",
-      "out/**",
-      "build/**",
-      "coverage/**",
-    ]),
   };
+}
+
+export function createSafeScipTsconfig(input: {
+  repoPath: string;
+  baseConfigPath?: string;
+  includedFiles?: string[];
+  allowJs: boolean;
+  projectReferencesEnabled: boolean;
+  references?: Array<Record<string, unknown>>;
+  tsBuildInfoFile?: string;
+}): Record<string, unknown> {
+  const uniqueIncludedFiles = [...new Set(input.includedFiles ?? [])].sort();
+  return {
+    ...(input.baseConfigPath ? { extends: input.baseConfigPath } : {}),
+    compilerOptions: {
+      ...(input.allowJs ? { allowJs: true, checkJs: false } : {}),
+      noEmit: true,
+      declaration: false,
+      composite: false,
+      incremental: false,
+      emitDeclarationOnly: false,
+      skipLibCheck: true,
+      ...(input.tsBuildInfoFile ? { tsBuildInfoFile: input.tsBuildInfoFile } : {}),
+    },
+    ...(uniqueIncludedFiles.length > 0 ? { files: uniqueIncludedFiles } : {}),
+    references: input.projectReferencesEnabled ? input.references ?? [] : [],
+    exclude: defaultScipExcludeGlobs(input.repoPath),
+  };
+}
+
+function defaultScipExcludeGlobs(repoPath: string): string[] {
+  return absoluteGlobs(repoPath, [
+    "node_modules/**",
+    "bower_components/**",
+    "jspm_packages/**",
+    ".git/**",
+    ".next/**",
+    ".turbo/**",
+    ".yarn/**",
+    "__generated__/**",
+    "dist/**",
+    "generated/**",
+    "out/**",
+    "build/**",
+    "coverage/**",
+  ]);
 }
 
 async function shouldAllowJs(repoPath: string): Promise<boolean> {

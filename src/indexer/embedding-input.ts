@@ -1,8 +1,81 @@
 export const legacyMaxEmbeddingInputChars = 6_000;
 export const defaultEmbeddingInputTokenBudget = 512;
 
-export function chunkEmbeddingInput(chunk: { content: string; name?: string }): string {
+export type EmbeddingInputHeader = {
+  repo?: string;
+  packageName?: string;
+  path?: string;
+  qualifiedName?: string;
+  kind?: string;
+  exported?: boolean;
+  test?: boolean;
+  sourceRoot?: string;
+};
+
+export function chunkEmbeddingInput(chunk: {
+  content: string;
+  name?: string;
+  kind?: string;
+  repo?: string;
+  packageName?: string;
+  file?: string;
+  metadata?: Record<string, unknown>;
+  fact?: {
+    embeddingInputMode?: "minimal" | "semantic-header";
+    embeddingInputHeader?: EmbeddingInputHeader;
+  };
+}): string {
+  if (chunk.fact?.embeddingInputMode === "semantic-header") {
+    return `${semanticHeader(chunk)}\n${chunk.content}`;
+  }
   return `${chunk.name ?? "chunk"}\n${chunk.content}`;
+}
+
+function semanticHeader(chunk: Parameters<typeof chunkEmbeddingInput>[0]): string {
+  const header = chunk.fact?.embeddingInputHeader ?? headerFromChunk(chunk);
+  const first = [
+    field("repo", header.repo),
+    field("package", header.packageName),
+    field("path", header.path),
+  ].filter(Boolean).join(" ");
+  const second = [
+    field("qualifiedName", header.qualifiedName ?? chunk.name),
+    field("kind", header.kind ?? chunk.kind),
+    field("exported", header.exported),
+    field("test", header.test),
+    field("sourceRoot", header.sourceRoot),
+  ].filter(Boolean).join(" ");
+  return [first, second].filter((line) => line.length > 0).join("\n");
+}
+
+function headerFromChunk(chunk: Parameters<typeof chunkEmbeddingInput>[0]): EmbeddingInputHeader {
+  return {
+    repo: chunk.repo,
+    packageName: chunk.packageName,
+    path: chunk.file,
+    qualifiedName: stringFromMetadata(chunk.metadata, "qualifiedName") ?? chunk.name,
+    kind: stringFromMetadata(chunk.metadata, "declarationKind") ?? chunk.kind,
+    exported: booleanFromMetadata(chunk.metadata, "exported"),
+    test: stringFromMetadata(chunk.metadata, "fileKind") === "test",
+    sourceRoot: stringFromMetadata(chunk.metadata, "sourceRoot"),
+  };
+}
+
+function field(name: string, value: string | boolean | undefined): string | undefined {
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+  return `${name}=${String(value)}`;
+}
+
+function stringFromMetadata(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function booleanFromMetadata(metadata: Record<string, unknown> | undefined, key: string): boolean | undefined {
+  const value = metadata?.[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 export interface EmbeddingInputTokenStats {

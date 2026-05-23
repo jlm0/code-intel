@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "code-intel.eval-pack.v1",
+  "id": "monorepo-js-ts",
+  "name": "Large Monorepo JS/TS Resilience Fixture",
+  "version": "1.0.0",
+  "kind": "synthetic",
+  "description": "Synthetic monorepo fixture covering policy profiles, generated type contracts, root scripts, path aliases, route handlers, graph fan-out, embedding metadata, and false-positive guards.",
+  "corpus": {
+    "type": "local",
+    "path": "corpus",
+    "repoPaths": ["."]
+  },
+  "caseFiles": ["cases/query.json"],
+  "astCaseFiles": ["cases/ast.json"],
+  "graphCaseFiles": ["cases/graph.json"]
+}

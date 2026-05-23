@@ -560,7 +560,7 @@ function chunkFromDeclaration(
   declaration: SourceDeclarationFact,
   calls: SourceCallFact[],
 ): SourceChunk | undefined {
-  const kind = chunkKindForDeclaration(declaration.kind, input.relativePath);
+  const kind = chunkKindForDeclaration(declaration, input);
   if (!kind) {
     return undefined;
   }
@@ -594,20 +594,54 @@ function chunkFromTestCase(
 }
 
 function chunkKindForDeclaration(
-  kind: SourceDeclarationKind,
-  relativePath: string,
+  declaration: SourceDeclarationFact,
+  input: ChunkSourceFileInput,
 ): SourceChunk["kind"] | undefined {
-  if (kind === "Object" || kind === "Namespace" || kind === "Enum" || kind === "ClassField" || kind === "ClassAccessor" || kind === "AmbientModule") {
+  const mode = input.policy?.semanticChunkMode ?? "bounded";
+  const kind = declaration.kind;
+  if (kind === "ClassField" || kind === "ClassAccessor") {
     return undefined;
+  }
+  if (kind === "Object") {
+    if (mode === "minimal") {
+      return undefined;
+    }
+    if (objectLiteralLooksTooLarge(declaration.sourceText, input.policy?.maxSmallObjectProperties ?? 6)) {
+      return mode === "expanded" ? "Symbol" : undefined;
+    }
+    return "Symbol";
+  }
+  if (kind === "Namespace" || kind === "Enum" || kind === "AmbientModule") {
+    return mode === "minimal" ? undefined : "Symbol";
   }
   if (kind === "Variable") {
-    return undefined;
+    if (mode === "minimal") {
+      return undefined;
+    }
+    if (!declaration.exported && mode !== "expanded") {
+      return undefined;
+    }
+    if (objectLiteralLooksTooLarge(declaration.sourceText, input.policy?.maxSmallObjectProperties ?? 6)) {
+      return mode === "expanded" ? "Symbol" : undefined;
+    }
+    return "Symbol";
   }
-  if (relativePath.includes(".test.") || relativePath.includes(".spec.")) return "Test";
+  if (input.relativePath.includes(".test.") || input.relativePath.includes(".spec.")) return "Test";
   if (kind === "Class") return "Class";
   if (kind === "Interface") return "Interface";
   if (kind === "TypeAlias") return "TypeAlias";
   return "Function";
+}
+
+function objectLiteralLooksTooLarge(sourceText: string, maxProperties: number): boolean {
+  const objectBody = sourceText.match(/\{([\s\S]*)\}/)?.[1];
+  if (!objectBody) {
+    return false;
+  }
+  const propertyLikeLines = objectBody
+    .split(/\r?\n/)
+    .filter((line) => /^\s*[A-Za-z_$][\w$-]*\s*:/.test(line));
+  return propertyLikeLines.length > maxProperties;
 }
 
 function containingChunkId(chunks: SourceChunk[], range: SourceRange): string | undefined {

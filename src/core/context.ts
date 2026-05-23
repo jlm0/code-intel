@@ -4,6 +4,7 @@ export interface RuntimeOptions {
   workspace?: string;
   repo?: string[];
   indexPath?: string;
+  indexProfile?: string;
   embeddingProvider?: string;
   embeddingModel?: string;
   includeIgnored?: boolean;
@@ -14,6 +15,7 @@ export interface RuntimeContext {
   workspace: string;
   repos: string[];
   indexPath: string;
+  indexProfile?: string;
   embeddingProvider?: string;
   embeddingModel?: string;
   includeIgnored: boolean;
@@ -29,6 +31,7 @@ export function createRuntimeContext(options: RuntimeOptions): RuntimeContext {
     workspace,
     repos,
     indexPath,
+    indexProfile: options.indexProfile,
     embeddingProvider: options.embeddingProvider,
     embeddingModel: options.embeddingModel,
     includeIgnored: options.includeIgnored === true,

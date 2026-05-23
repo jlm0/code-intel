@@ -269,4 +269,56 @@ describe("workspace discovery", () => {
       await rm(repoPath, { recursive: true, force: true });
     }
   });
+
+  it("separates generated source, build artifacts, hidden allowlists, and outside-package metadata", async () => {
+    const repoPath = await mkdtemp(join(tmpdir(), "code-intel-discovery-policy-"));
+    try {
+      await mkdir(join(repoPath, "generated"), { recursive: true });
+      await mkdir(join(repoPath, "dist"), { recursive: true });
+      await mkdir(join(repoPath, ".storybook"), { recursive: true });
+      await mkdir(join(repoPath, "scripts"), { recursive: true });
+      await mkdir(join(repoPath, "packages", "app", "src"), { recursive: true });
+      await writeFile(
+        join(repoPath, "package.json"),
+        JSON.stringify({ name: "@fixture/discovery-policy", workspaces: ["packages/*"] }),
+      );
+      await writeFile(join(repoPath, "packages", "app", "package.json"), JSON.stringify({ name: "@fixture/app" }));
+      await writeFile(join(repoPath, "packages", "app", "src", "index.ts"), "export const app = true;\n");
+      await writeFile(join(repoPath, "generated", "api.d.ts"), "export interface ApiClient { id: string }\n");
+      await writeFile(join(repoPath, "generated", "api.ts"), "export const generatedRuntime = true;\n");
+      await writeFile(join(repoPath, "dist", "bundle.ts"), "export const built = true;\n");
+      await writeFile(join(repoPath, ".storybook", "preview.ts"), "export const preview = true;\n");
+      await writeFile(join(repoPath, "scripts", "release.ts"), "export const release = true;\n");
+
+      const workspace = await discoverWorkspace({
+        workspaceRoot: repoPath,
+        repoPaths: [repoPath],
+        discoveryPolicy: {
+          generatedSourceMode: "types-only",
+          includeBuildArtifacts: false,
+          allowedHiddenDirectories: [".storybook"],
+          splitOutsidePackages: true,
+        },
+      });
+
+      expect(workspace.repos[0]?.files.map((file) => file.relativePath).sort()).toEqual([
+        ".storybook/preview.ts",
+        "generated/api.d.ts",
+        "packages/app/src/index.ts",
+        "scripts/release.ts",
+      ]);
+      expect(workspace.repos[0]?.files.find((file) => file.relativePath === "scripts/release.ts")).toMatchObject({
+        outsidePackage: true,
+        outsidePackageGroup: "scripts",
+      });
+      expect(workspace.diagnostics.files).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ relativePath: "generated/api.ts", reason: "generated-excluded" }),
+          expect.objectContaining({ relativePath: "dist", reason: "build-artifact" }),
+        ]),
+      );
+    } finally {
+      await rm(repoPath, { recursive: true, force: true });
+    }
+  });
 });

@@ -44,4 +44,51 @@ describe("Tree-sitter chunking", () => {
 
     expect(chunks.map((chunk) => chunk.name)).toContain("partiallyWritten");
   });
+
+  it("adds profile-aware high-value declaration chunks without unbounded default growth", () => {
+    const content = `
+export const apiConfig = {
+  endpoint: "/api",
+  timeoutMs: 1000,
+};
+
+export enum PaymentState {
+  Pending = "pending",
+  Paid = "paid",
+}
+
+export namespace ApiContracts {
+  export interface Payment {
+    id: string;
+  }
+}
+
+declare module "virtual:contracts" {
+  export interface RuntimeContract {
+    id: string;
+  }
+}
+`;
+
+    const balanced = chunkSourceFile({
+      relativePath: "packages/api/generated/contracts.d.ts",
+      content,
+      policy: {
+        semanticChunkMode: "bounded",
+      },
+    });
+    const quality = chunkSourceFile({
+      relativePath: "packages/api/generated/contracts.d.ts",
+      content,
+      policy: {
+        semanticChunkMode: "expanded",
+      },
+    });
+
+    expect(balanced.map((chunk) => chunk.name)).toEqual(
+      expect.arrayContaining(["apiConfig", "PaymentState", "ApiContracts", "virtual:contracts"]),
+    );
+    expect(quality.length).toBeGreaterThanOrEqual(balanced.length);
+    expect(balanced.length).toBeLessThanOrEqual(6);
+  });
 });

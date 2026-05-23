@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import type { CodeNode } from "../schema/schemas.js";
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import type { ChunkFact } from "./fact-cache.js";
@@ -46,7 +49,17 @@ export type EmbeddingBatchProgressUpdate = {
 
 export interface EmbedGraphChunksOptions {
   batchSize?: number;
+  maxBatchPaddedTokens?: number;
+  maxBatchTotalTokens?: number;
+  durableCache?: DurableEmbeddingCacheOptions;
   onProgress?: (update: EmbeddingBatchProgressUpdate) => void | Promise<void>;
+}
+
+export interface DurableEmbeddingCacheOptions {
+  path: string;
+  provider: string;
+  model: string;
+  dimension: number;
 }
 
 export type EmbeddingInputSummary = EmbeddingInputTokenStats & {
@@ -66,6 +79,12 @@ export async function embedGraphChunks(
   const missingInputs = new Map<string, EmbeddingInputEntry>();
   const allInputs = new Map<string, EmbeddingInputEntry>();
   const batchSize = normalizeBatchSize(options.batchSize);
+  if (options.durableCache) {
+    const durable = await readDurableEmbeddingCache(options.durableCache);
+    for (const [hash, embedding] of durable) {
+      embeddingCache.set(hash, embedding);
+    }
+  }
   let reused = 0;
   let embedded = 0;
   let chunksVisited = 0;
@@ -108,7 +127,11 @@ export async function embedGraphChunks(
   }
 
   const embeddingInput = summarizeEmbeddingInputEntries([...allInputs.values()], chunksById);
-  const batches = createLengthAwareBatches([...missingInputs.values()], batchSize);
+  const batches = createLengthAwareBatches([...missingInputs.values()], {
+    batchSize,
+    maxBatchPaddedTokens: options.maxBatchPaddedTokens,
+    maxBatchTotalTokens: options.maxBatchTotalTokens,
+  });
   const embeddingStartedAt = performance.now();
   let batchesCompleted = 0;
   for (const batch of batches) {
@@ -123,6 +146,7 @@ export async function embedGraphChunks(
       embeddingInputsReused: allInputs.size - missingInputs.size,
       embeddingStartedAt,
       onProgress: options.onProgress,
+      durableCache: options.durableCache,
     });
     batchesCompleted += 1;
     embedded += progress.embedded;
@@ -145,6 +169,7 @@ async function flushMissingInputs(
     embeddingInputsMissing: number;
     embeddingInputsReused: number;
     embeddingStartedAt: number;
+    durableCache?: DurableEmbeddingCacheOptions;
     onProgress?: (update: EmbeddingBatchProgressUpdate) => void | Promise<void>;
   },
 ): Promise<{ embedded: number }> {
@@ -174,6 +199,9 @@ async function flushMissingInputs(
       embedded += 1;
     }
   });
+  if (progress.durableCache) {
+    await writeDurableEmbeddingCache(progress.durableCache, embeddingCache);
+  }
   const completedBatches = progress.batchesCompleted + 1;
   await progress.onProgress?.({
     event: "batch_completed",
@@ -282,16 +310,99 @@ function summarizeEmbeddingInputEntries(
   };
 }
 
-function createLengthAwareBatches(entries: EmbeddingInputEntry[], batchSize: number): EmbeddingInputEntry[][] {
+function createLengthAwareBatches(
+  entries: EmbeddingInputEntry[],
+  options: {
+    batchSize: number;
+    maxBatchPaddedTokens?: number;
+    maxBatchTotalTokens?: number;
+  },
+): EmbeddingInputEntry[][] {
   const sorted = [...entries].sort((left, right) =>
     left.tokenCount - right.tokenCount ||
     left.embeddingInputHash.localeCompare(right.embeddingInputHash),
   );
   const batches: EmbeddingInputEntry[][] = [];
-  for (let index = 0; index < sorted.length; index += batchSize) {
-    batches.push(sorted.slice(index, index + batchSize));
+  let current: EmbeddingInputEntry[] = [];
+  for (const entry of sorted) {
+    if (current.length > 0 && batchWouldExceed([...current, entry], options)) {
+      batches.push(current);
+      current = [];
+    }
+    current.push(entry);
+    if (current.length >= options.batchSize) {
+      batches.push(current);
+      current = [];
+    }
+  }
+  if (current.length > 0) {
+    batches.push(current);
   }
   return batches;
+}
+
+function batchWouldExceed(
+  entries: EmbeddingInputEntry[],
+  options: {
+    maxBatchPaddedTokens?: number;
+    maxBatchTotalTokens?: number;
+  },
+): boolean {
+  const telemetry = embeddingBatchTelemetry(entries.map((entry) => entry.tokenCount));
+  return (
+    (options.maxBatchTotalTokens !== undefined && telemetry.batchTotalTokens > options.maxBatchTotalTokens) ||
+    (options.maxBatchPaddedTokens !== undefined && telemetry.batchPaddedTokens > options.maxBatchPaddedTokens)
+  );
+}
+
+export async function readDurableEmbeddingCache(
+  options: DurableEmbeddingCacheOptions,
+): Promise<Map<string, number[]>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(options.path, "utf8"));
+  } catch {
+    return new Map();
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return new Map();
+  }
+  const payload = parsed as {
+    provider?: unknown;
+    model?: unknown;
+    dimension?: unknown;
+    embeddings?: unknown;
+  };
+  if (
+    payload.provider !== options.provider ||
+    payload.model !== options.model ||
+    payload.dimension !== options.dimension ||
+    !payload.embeddings ||
+    typeof payload.embeddings !== "object"
+  ) {
+    return new Map();
+  }
+  const entries = Object.entries(payload.embeddings)
+    .filter((entry): entry is [string, number[]] =>
+      typeof entry[0] === "string" &&
+      Array.isArray(entry[1]) &&
+      entry[1].every((value) => typeof value === "number")
+    );
+  return new Map(entries);
+}
+
+async function writeDurableEmbeddingCache(
+  options: DurableEmbeddingCacheOptions,
+  embeddings: Map<string, number[]>,
+): Promise<void> {
+  await mkdir(dirname(options.path), { recursive: true });
+  const payload = {
+    provider: options.provider,
+    model: options.model,
+    dimension: options.dimension,
+    embeddings: Object.fromEntries([...embeddings.entries()].sort((left, right) => left[0].localeCompare(right[0]))),
+  };
+  await writeFile(options.path, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
 function progressFields(

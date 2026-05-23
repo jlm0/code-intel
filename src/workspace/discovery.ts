@@ -3,7 +3,13 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { normalizeRelativePath } from "../core/ids.js";
-import { directoryIsIgnored, type IgnorePolicyOptions } from "./ignore.js";
+import type { DiscoveryPolicy } from "../core/index-policy.js";
+import {
+  buildArtifactDirectories,
+  directoryIsIgnored,
+  generatedDirectories,
+  type IgnorePolicyOptions,
+} from "./ignore.js";
 
 const sourceExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 
@@ -13,6 +19,7 @@ export interface DiscoverWorkspaceInput {
   includeIgnored?: boolean;
   allowedHiddenDirectories?: string[];
   workspaceManifestPath?: string;
+  discoveryPolicy?: Partial<DiscoveryPolicy>;
 }
 
 export interface DiscoveredWorkspace {
@@ -48,6 +55,10 @@ export interface DiscoveredFile {
   relativePath: string;
   packageName?: string;
   language: "typescript" | "tsx" | "javascript" | "jsx";
+  generated?: boolean;
+  buildArtifact?: boolean;
+  outsidePackage?: boolean;
+  outsidePackageGroup?: string;
 }
 
 export interface WorkspaceDiscoveryDiagnostics {
@@ -60,9 +71,18 @@ export interface DiscoveryFileDiagnostic {
   relativePath: string;
   kind: "file" | "directory";
   status: "included" | "excluded";
-  reason: "source-file" | "ignored-directory" | "unsupported-extension" | "tsconfig-excluded";
+  reason:
+    | "source-file"
+    | "ignored-directory"
+    | "unsupported-extension"
+    | "tsconfig-excluded"
+    | "generated-excluded"
+    | "build-artifact";
   packageName?: string;
   language?: DiscoveredFile["language"];
+  size?: number;
+  generated?: boolean;
+  buildArtifact?: boolean;
 }
 
 export async function discoverWorkspace(input: DiscoverWorkspaceInput): Promise<DiscoveredWorkspace> {
@@ -74,13 +94,22 @@ export async function discoverWorkspace(input: DiscoverWorkspaceInput): Promise<
     input.repoPaths.length > 0 ? input.repoPaths : manifest.repoPaths.length > 0 ? manifest.repoPaths : [workspaceRoot];
   const allowedHiddenDirectories = [
     ...manifest.allowedHiddenDirectories,
+    ...(input.discoveryPolicy?.allowedHiddenDirectories ?? []),
     ...(input.allowedHiddenDirectories ?? []),
   ];
+  const discoveryPolicy = {
+    generatedSourceMode: input.discoveryPolicy?.generatedSourceMode ?? "exclude",
+    includeBuildArtifacts: input.discoveryPolicy?.includeBuildArtifacts ?? false,
+    splitOutsidePackages: input.discoveryPolicy?.splitOutsidePackages ?? true,
+  };
   const discoveredRepos = await Promise.all(
     repoPaths.map((repoPath) =>
       discoverRepo(workspaceRoot, resolve(workspaceRoot, repoPath), {
         includeIgnored: input.includeIgnored === true,
         allowedHiddenDirectories,
+        generatedSourceMode: discoveryPolicy.generatedSourceMode,
+        includeBuildArtifacts: discoveryPolicy.includeBuildArtifacts,
+        splitOutsidePackages: discoveryPolicy.splitOutsidePackages,
         repoPath: resolve(workspaceRoot, repoPath),
       }),
     ),
@@ -208,6 +237,40 @@ async function discoverSourceFiles(
     options,
     async (absolutePath) => {
       const extension = getExtension(absolutePath);
+      const relativePath = normalizeRelativePath(relative(repoPath, absolutePath));
+      const generated = pathHasDirectory(relativePath, generatedDirectories);
+      const buildArtifact = pathHasDirectory(relativePath, buildArtifactDirectories);
+      if (buildArtifact && !options.includeIgnored && options.includeBuildArtifacts !== true) {
+        diagnostics.push({
+          repo: repoName,
+          absolutePath,
+          relativePath,
+          kind: "file",
+          status: "excluded",
+          reason: "build-artifact",
+          size: await fileSize(absolutePath),
+          buildArtifact: true,
+        });
+        return;
+      }
+      if (
+        generated &&
+        !options.includeIgnored &&
+        (options.generatedSourceMode === "exclude" ||
+          (options.generatedSourceMode === "types-only" && !absolutePath.endsWith(".d.ts")))
+      ) {
+        diagnostics.push({
+          repo: repoName,
+          absolutePath,
+          relativePath,
+          kind: "file",
+          status: "excluded",
+          reason: "generated-excluded",
+          size: await fileSize(absolutePath),
+          generated: true,
+        });
+        return;
+      }
       if (!sourceExtensions.has(extension)) {
         if (isSupportedConfigFile(absolutePath)) {
           return;
@@ -215,10 +278,13 @@ async function discoverSourceFiles(
         diagnostics.push({
           repo: repoName,
           absolutePath,
-          relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
+          relativePath,
           kind: "file",
           status: "excluded",
           reason: "unsupported-extension",
+          size: await fileSize(absolutePath),
+          generated,
+          buildArtifact,
         });
         return;
       }
@@ -227,20 +293,30 @@ async function discoverSourceFiles(
         diagnostics.push({
           repo: repoName,
           absolutePath,
-          relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
+          relativePath,
           kind: "file",
           status: "excluded",
           reason: "tsconfig-excluded",
           packageName: matchingPackage.name,
           language: languageForPath(absolutePath),
+          size: await fileSize(absolutePath),
+          generated,
+          buildArtifact,
         });
         return;
       }
+      const outsidePackage = !matchingPackage;
       const discoveredFile = {
         absolutePath,
-        relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
+        relativePath,
         packageName: matchingPackage?.name,
         language: languageForPath(absolutePath),
+        generated,
+        buildArtifact,
+        outsidePackage,
+        ...(outsidePackage && options.splitOutsidePackages
+          ? { outsidePackageGroup: topLevelGroup(relativePath) }
+          : {}),
       } satisfies DiscoveredFile;
       files.push(discoveredFile);
       diagnostics.push({
@@ -252,6 +328,9 @@ async function discoverSourceFiles(
         reason: "source-file",
         packageName: matchingPackage?.name,
         language: discoveredFile.language,
+        size: await fileSize(absolutePath),
+        generated,
+        buildArtifact,
       });
     },
     (absolutePath) => {
@@ -261,7 +340,10 @@ async function discoverSourceFiles(
         relativePath: normalizeRelativePath(relative(repoPath, absolutePath)),
         kind: "directory",
         status: "excluded",
-        reason: "ignored-directory",
+        reason: pathHasDirectory(normalizeRelativePath(relative(repoPath, absolutePath)), buildArtifactDirectories) &&
+          !basename(absolutePath).startsWith(".")
+          ? "build-artifact"
+          : "ignored-directory",
       });
     },
   );
@@ -282,6 +364,8 @@ async function walk(
       if (directoryIsIgnored(entry.name, {
         includeIgnored: options.includeIgnored,
         allowedHiddenDirectories: options.allowedHiddenDirectories,
+        generatedSourceMode: options.generatedSourceMode,
+        includeBuildArtifacts: options.includeBuildArtifacts,
         relativePath: relativeDirectoryPath,
       })) {
         onSkippedDirectory?.(absolutePath);
@@ -615,4 +699,23 @@ interface WorkspaceManifestConfig {
 interface DiscoverOptions extends IgnorePolicyOptions {
   includeIgnored: boolean;
   repoPath: string;
+  splitOutsidePackages: boolean;
+}
+
+async function fileSize(path: string): Promise<number | undefined> {
+  try {
+    return (await stat(path)).size;
+  } catch {
+    return undefined;
+  }
+}
+
+function pathHasDirectory(relativePath: string, directories: Set<string>): boolean {
+  return normalizeRelativePath(relativePath)
+    .split("/")
+    .some((part) => directories.has(part));
+}
+
+function topLevelGroup(relativePath: string): string {
+  return normalizeRelativePath(relativePath).split("/")[0] || "root";
 }

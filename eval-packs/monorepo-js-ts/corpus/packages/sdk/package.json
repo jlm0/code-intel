@@ -1,0 +1,9 @@
+{
+  "name": "@fixture/sdk",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@fixture/shared": "workspace:*"
+  }
+}

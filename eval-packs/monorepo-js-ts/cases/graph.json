@@ -1,0 +1,44 @@
+[
+  {
+    "id": "monorepo.graph.route-to-sdk",
+    "name": "Route handler calls SDK factory",
+    "gate": {
+      "id": "monorepo.graph.route-to-sdk",
+      "status": "required",
+      "capability": "route-to-sdk-call",
+      "layer": "graph"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        { "file": "apps/web/src/routes/checkout.ts", "symbol": "checkoutRouteHandler" },
+        { "file": "packages/sdk/src/client.ts", "symbol": "createApiClient" }
+      ],
+      "allowedEdgeKinds": ["CALLS", "REFERENCES", "IMPORTS"],
+      "maxDepth": 4,
+      "requireEvidence": { "anyOf": ["scip-typescript", "tree-sitter-call", "module-resolution"] }
+    },
+    "failureClassHint": "graph-traversal"
+  },
+  {
+    "id": "monorepo.graph-route-test-link",
+    "name": "Route test links back to route handler",
+    "gate": {
+      "id": "monorepo.graph.route-test-link",
+      "status": "required",
+      "capability": "test-to-implementation",
+      "layer": "test-linking"
+    },
+    "check": {
+      "type": "path-exists",
+      "nodes": [
+        { "file": "apps/web/src/routes/checkout.test.ts" },
+        { "file": "apps/web/src/routes/checkout.ts", "symbol": "checkoutRouteHandler" }
+      ],
+      "allowedEdgeKinds": ["TESTS", "REFERENCES", "CALLS"],
+      "maxDepth": 4,
+      "requireEvidence": true
+    },
+    "failureClassHint": "test-linking"
+  }
+]

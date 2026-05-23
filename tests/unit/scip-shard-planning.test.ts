@@ -2,7 +2,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { planScipShardsForRepo } from "../../src/indexer/indexer.js";
+import { resolveIndexPolicy } from "../../src/core/index-policy.js";
+import { planScipShardsForRepo } from "../../src/indexer/scip-shard-planning.js";
 import type { DiscoveredRepo } from "../../src/workspace/discovery.js";
 
 describe("SCIP shard planning", () => {
@@ -40,13 +41,86 @@ describe("SCIP shard planning", () => {
       files.map((file) => file.absolutePath).sort(),
     );
   });
+
+  it("splits repo-root outside-package files by top-level directory under monorepo policy", () => {
+    const repoPath = "/tmp/code-intel-root-files";
+    const files = [
+      sourceFile(repoPath, "scripts/release.ts", undefined),
+      sourceFile(repoPath, "scripts/audit.ts", undefined),
+      sourceFile(repoPath, "tools/codegen.ts", undefined),
+      sourceFile(repoPath, "types/generated/api.d.ts", undefined),
+    ];
+    const repo: DiscoveredRepo = {
+      name: "root-files",
+      path: repoPath,
+      relativePath: ".",
+      commit: "test",
+      packageManager: "pnpm",
+      packages: [],
+      files,
+    };
+
+    const shards = planScipShardsForRepo(repo, "/tmp/code-intel-index", {
+      policy: resolveIndexPolicy({ profile: "monorepo" }).scip,
+    });
+
+    expect(shards.map((shard) => shard.id)).toEqual([
+      "repo-root-scripts",
+      "repo-root-tools",
+      "repo-root-types",
+    ]);
+    expect(shards.flatMap((shard) => shard.includedFiles ?? []).sort()).toEqual(
+      files.map((file) => file.absolutePath).sort(),
+    );
+  });
+
+  it("uses previous OOM history to pre-split matching paths deterministically", () => {
+    const repoPath = "/tmp/code-intel-history";
+    const packagePath = join(repoPath, "packages", "api");
+    const files = Array.from({ length: 8 }, (_, index) =>
+      sourceFile(repoPath, `packages/api/src/large-${index}.ts`, "@fixture/api")
+    );
+    const repo: DiscoveredRepo = {
+      name: "history",
+      path: repoPath,
+      relativePath: ".",
+      commit: "test",
+      packageManager: "npm",
+      packages: [{
+        name: "@fixture/api",
+        path: packagePath,
+        relativePath: "packages/api",
+        exports: undefined,
+        dependencies: {},
+        sourceRoots: [join(packagePath, "src")],
+        excludePatterns: [],
+      }],
+      files,
+    };
+
+    const shards = planScipShardsForRepo(repo, "/tmp/code-intel-index", {
+      policy: resolveIndexPolicy({ profile: "balanced" }).scip,
+      failureHistory: [{
+        repo: "history",
+        pathPrefix: "packages/api/src",
+        failureKind: "oom",
+        lastFailedAt: "2026-05-23T00:00:00.000Z",
+      }],
+    });
+
+    expect(shards.length).toBeGreaterThan(1);
+    expect(shards.every((shard) => shard.reason.includes("history"))).toBe(true);
+    expect(shards.flatMap((shard) => shard.includedFiles ?? []).sort()).toEqual(
+      files.map((file) => file.absolutePath).sort(),
+    );
+  });
 });
 
-function sourceFile(repoPath: string, relativePath: string, packageName: string) {
+function sourceFile(repoPath: string, relativePath: string, packageName: string | undefined) {
   return {
     absolutePath: join(repoPath, relativePath),
     relativePath,
-    packageName,
+    ...(packageName ? { packageName } : {}),
     language: "typescript" as const,
   };
 }

@@ -15,6 +15,7 @@ export function buildIndexDiagnostics(input: {
   generatedAt: string;
   fileFactsByKey: Map<string, FileFact>;
   scipCountsByFile: Map<string, { definitions: number; references: number }>;
+  scipCoverageByFile?: Map<string, ScipFileCoverage>;
   nodes: Iterable<CodeNode>;
   edges: Iterable<CodeEdge>;
 }): IndexDiagnostics {
@@ -28,6 +29,7 @@ export function buildIndexDiagnostics(input: {
       const fileFact = input.fileFactsByKey.get(key);
       const graph = graphCounts.get(key) ?? emptyGraphCounts();
       const scip = input.scipCountsByFile.get(key) ?? { definitions: 0, references: 0 };
+      const scipCoverage = input.scipCoverageByFile?.get(key);
       const symbolNames = symbolNamesForFile(fileFact);
       const embeddedChunks = fileFact?.chunks.filter((chunk) => (chunk.embedding?.length ?? 0) > 0).length ?? 0;
       const graphWritten = graph.nodes > 0;
@@ -57,9 +59,7 @@ export function buildIndexDiagnostics(input: {
             declarations: fileFact?.declarations.length ?? 0,
             calls: fileFact?.calls.length ?? 0,
           }),
-          scip: scip.definitions + scip.references > 0
-            ? { status: "pass", evidence: scip }
-            : { status: "warn", reason: "no-scip-occurrences-for-file", evidence: scip },
+          scip: scipStage(scip, scipCoverage),
           chunks: stageFromCount(fileFact?.chunks.length ?? 0, "no-chunks"),
           embeddings: stageFromCount(embeddedChunks, "no-embedded-chunks"),
           graph: stageFromCount(graph.nodes, "no-graph-nodes", graph),
@@ -114,6 +114,16 @@ export function buildIndexDiagnostics(input: {
     },
     files: sortedFiles,
   });
+}
+
+export interface ScipFileCoverage {
+  planned: number;
+  succeeded: number;
+  failed: number;
+  fallback: number;
+  failureReasons: string[];
+  shardIds: string[];
+  retryLineage: string[][];
 }
 
 function skippedFileDiagnostic(diagnostic: DiscoveryFileDiagnostic): FileLifecycleDiagnostic {
@@ -207,4 +217,39 @@ function stageFromCount(count: number, reason: string, evidence?: Record<string,
   return count > 0
     ? { status: "pass", evidence: { count, ...evidence } }
     : { status: "fail", reason, evidence };
+}
+
+function scipStage(
+  scip: { definitions: number; references: number },
+  coverage: ScipFileCoverage | undefined,
+): DiagnosticStage {
+  const evidence = {
+    ...scip,
+    ...(coverage ? {
+      plannedShards: coverage.planned,
+      successfulShards: coverage.succeeded,
+      failedShards: coverage.failed,
+      fallbackShards: coverage.fallback,
+      coverageRatio: coverage.planned > 0
+        ? Math.round((coverage.succeeded / coverage.planned) * 1_000_000) / 1_000_000
+        : 0,
+      failureReasons: coverage.failureReasons,
+      shardIds: coverage.shardIds,
+      retryLineage: coverage.retryLineage,
+    } : {}),
+  };
+  if (coverage && coverage.failed > 0) {
+    return {
+      status: "warn",
+      reason: coverage.failureReasons[0] ?? "scip-shard-failed",
+      evidence,
+    };
+  }
+  if (scip.definitions + scip.references > 0 || (coverage && coverage.succeeded > 0)) {
+    return { status: "pass", evidence };
+  }
+  if (coverage && coverage.fallback > 0) {
+    return { status: "warn", reason: "scip-fallback-for-file", evidence };
+  }
+  return { status: "warn", reason: "no-scip-occurrences-for-file", evidence };
 }

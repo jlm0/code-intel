@@ -4,6 +4,7 @@ import {
 } from "../treesitter/chunker.js";
 import type { EmbeddingProvider } from "../vectors/embedding.js";
 import type { DiscoveredWorkspace } from "../workspace/discovery.js";
+import type { IndexPolicy } from "../core/index-policy.js";
 import {
   createEmbeddingCache,
   filesByFingerprintKey,
@@ -40,6 +41,7 @@ export async function prepareFileFacts(input: {
   includeIgnored?: boolean;
   allowedHiddenDirectories?: string[];
   workspaceManifestPath?: string;
+  policy?: IndexPolicy;
 }): Promise<FileFactPlan> {
   const configHash = await calculateConfigHash({
     workspace: input.workspace,
@@ -47,6 +49,7 @@ export async function prepareFileFacts(input: {
     allowedHiddenDirectories: input.allowedHiddenDirectories,
     workspaceManifestPath: input.workspaceManifestPath,
     embeddingProvider: input.embeddingProvider,
+    policy: input.policy,
   });
   const fingerprintedFiles = await fingerprintWorkspaceFiles(input.workspace);
   const currentFingerprints = new Map(
@@ -91,8 +94,20 @@ export async function prepareFileFacts(input: {
       const astFacts = extractSourceFileFacts({
         relativePath: file.discoveredFile.relativePath,
         content: file.content,
+        policy: {
+          semanticChunkMode: input.policy?.chunks.semanticChunkMode,
+          maxSmallObjectProperties: input.policy?.chunks.maxSmallObjectProperties,
+        },
       });
-      const chunks = await prepareEmbeddingInputChunks(astFacts.chunks, input.embeddingProvider);
+      const chunks = await prepareEmbeddingInputChunks(astFacts.chunks, input.embeddingProvider, {
+        inputMode: input.policy?.embedding.inputMode ?? "semantic-header",
+        tokenBudget: input.policy?.embedding.tokenBudget,
+        repo: file.fingerprint.repo,
+        packageName: file.fingerprint.packageName,
+        relativePath: file.fingerprint.relativePath,
+        language: file.fingerprint.language,
+        sourceRoot: sourceRootForFile(input.workspace, file.fingerprint.repo, file.fingerprint.relativePath),
+      });
       fileFactsByKey.set(key, {
         fingerprint: file.fingerprint,
         hasParseError: astFacts.hasParseError,
@@ -144,7 +159,9 @@ function sourceChunkToFact(chunk: SourceChunk): ChunkFact {
     content: chunk.content,
     contentHash: chunk.contentHash,
     calls: chunk.calls,
-    embeddingInputHash: sha256(chunkEmbeddingInput(chunk)),
+    embeddingInputHash: sha256(sourceChunkEmbeddingInput(chunk)),
+    embeddingInputMode: chunk.embeddingInput?.mode,
+    embeddingInputHeader: cleanHeader(chunk.embeddingInput?.header),
     embeddingInputTokenCount: chunk.embeddingInput?.tokenCount,
     embeddingInputTokenBudget: chunk.embeddingInput?.tokenBudget,
     embeddingInputOversized: chunk.embeddingInput?.oversized,
@@ -158,14 +175,27 @@ function sourceChunkToFact(chunk: SourceChunk): ChunkFact {
 async function prepareEmbeddingInputChunks(
   chunks: SourceChunk[],
   embeddingProvider: EmbeddingProvider,
+  context: {
+    inputMode: "minimal" | "semantic-header";
+    tokenBudget?: number;
+    repo: string;
+    packageName?: string;
+    relativePath: string;
+    language: string;
+    sourceRoot?: string;
+  },
 ): Promise<SourceChunk[]> {
   const tokenBudget = normalizeTokenBudget(
-    Math.min(embeddingProvider.maxInputTokens, defaultEmbeddingInputTokenBudget),
+    Math.min(embeddingProvider.maxInputTokens, context.tokenBudget ?? defaultEmbeddingInputTokenBudget),
   );
-  const tokenCounts = await embeddingProvider.countTokens(chunks.map(chunkEmbeddingInput));
+  const headeredChunks = chunks.map((chunk) => withEmbeddingInput(chunk, {
+    mode: context.inputMode,
+    header: embeddingHeader(chunk, context),
+  }));
+  const tokenCounts = await embeddingProvider.countTokens(headeredChunks.map(sourceChunkEmbeddingInput));
   const prepared: SourceChunk[] = [];
 
-  for (const [index, chunk] of chunks.entries()) {
+  for (const [index, chunk] of headeredChunks.entries()) {
     const tokenCount = tokenCounts[index] ?? 0;
     if (tokenCount <= tokenBudget) {
       prepared.push(withEmbeddingInput(chunk, {
@@ -232,7 +262,7 @@ async function splitContentByTokenBudget(
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
       const content = lines.slice(start, mid).join("\n");
-      const tokenCount = (await embeddingProvider.countTokens([chunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
+      const tokenCount = (await embeddingProvider.countTokens([sourceChunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
       if (tokenCount <= tokenBudget) {
         bestEnd = mid;
         bestTokenCount = tokenCount;
@@ -260,7 +290,7 @@ async function splitContentByTokenBudget(
     const content = lines.slice(start, adjustedEnd).join("\n");
     const tokenCount = adjustedEnd === bestEnd
       ? bestTokenCount
-      : (await embeddingProvider.countTokens([chunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
+      : (await embeddingProvider.countTokens([sourceChunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
     pieces.push({
       content,
       range: {
@@ -319,7 +349,7 @@ async function splitLongLineByTokenBudget(
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
       const content = line.slice(start, mid);
-      const tokenCount = (await embeddingProvider.countTokens([chunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
+      const tokenCount = (await embeddingProvider.countTokens([sourceChunkEmbeddingInput({ ...chunk, content })]))[0] ?? 0;
       if (tokenCount <= tokenBudget || mid === start + 1) {
         bestEnd = mid;
         bestTokenCount = tokenCount;
@@ -350,8 +380,74 @@ function withEmbeddingInput(
 ): SourceChunk {
   return {
     ...chunk,
-    embeddingInput,
+    embeddingInput: {
+      ...chunk.embeddingInput,
+      ...embeddingInput,
+    },
   };
+}
+
+function sourceChunkEmbeddingInput(chunk: SourceChunk): string {
+  return chunkEmbeddingInput({
+    name: chunk.name,
+    kind: chunk.kind,
+    content: chunk.content,
+    fact: {
+      embeddingInputMode: chunk.embeddingInput?.mode,
+      embeddingInputHeader: cleanHeader(chunk.embeddingInput?.header),
+    },
+  });
+}
+
+function embeddingHeader(
+  chunk: SourceChunk,
+  context: {
+    inputMode: "minimal" | "semantic-header";
+    repo: string;
+    packageName?: string;
+    relativePath: string;
+    language: string;
+    sourceRoot?: string;
+  },
+): NonNullable<SourceChunk["embeddingInput"]>["header"] {
+  return {
+    repo: context.repo,
+    packageName: context.packageName,
+    path: context.relativePath,
+    qualifiedName: chunk.name,
+    kind: chunk.kind,
+    exported: /^export\s/.test(chunk.content.trim()),
+    test: /\.(test|spec)\.[cm]?[jt]sx?$/.test(context.relativePath),
+    sourceRoot: context.sourceRoot,
+  };
+}
+
+function cleanHeader(
+  header: Record<string, string | boolean | undefined> | undefined,
+): Record<string, string | boolean> | undefined {
+  if (!header) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(header).filter((entry): entry is [string, string | boolean] =>
+      typeof entry[1] === "string" || typeof entry[1] === "boolean"
+    ),
+  );
+}
+
+function sourceRootForFile(
+  workspace: DiscoveredWorkspace,
+  repoName: string,
+  relativePath: string,
+): string | undefined {
+  const repo = workspace.repos.find((candidate) => candidate.name === repoName);
+  const file = repo?.files.find((candidate) => candidate.relativePath === relativePath);
+  const pkg = repo?.packages.find((candidate) => candidate.name === file?.packageName);
+  if (!pkg) {
+    return undefined;
+  }
+  const root = pkg.sourceRoots.find((candidate) => file?.absolutePath.startsWith(`${candidate.replace(/\/$/, "")}/`));
+  return root ? root.slice(repo!.path.length + 1) : undefined;
 }
 
 function cloneChunkFact(chunk: ChunkFact): ChunkFact {
@@ -359,6 +455,8 @@ function cloneChunkFact(chunk: ChunkFact): ChunkFact {
     ...chunk,
     range: { ...chunk.range },
     calls: [...chunk.calls],
+    embeddingInputMode: chunk.embeddingInputMode,
+    embeddingInputHeader: chunk.embeddingInputHeader ? { ...chunk.embeddingInputHeader } : undefined,
     embedding: chunk.embedding ? [...chunk.embedding] : undefined,
   };
 }

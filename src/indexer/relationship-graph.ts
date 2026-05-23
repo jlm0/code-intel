@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 
 import { createStableId, normalizeRelativePath } from "../core/ids.js";
+import type { GraphPolicy } from "../core/index-policy.js";
 import type { CodeEdge, CodeNode } from "../schema/schemas.js";
 import type { FileFact } from "./fact-cache.js";
 
@@ -24,6 +25,7 @@ export interface ApplyRelationshipGraphFactsInput {
   fileNodes: Map<string, CodeNode>;
   astSymbolsByFile: Map<string, CodeNode[]>;
   fileFactsByRelativePath: Map<string, FileFact>;
+  policy?: Partial<GraphPolicy>;
   addNode: (node: Omit<CodeNode, "schemaVersion">) => CodeNode;
   addEdge: AddEdge;
 }
@@ -388,6 +390,11 @@ function applyDiscriminatedUnionRelationships(input: ApplyRelationshipGraphFacts
 }
 
 function applyTransitiveCallRelationshipEdges(input: ApplyRelationshipGraphFactsInput): void {
+  const limit = input.policy?.transitiveCallLimit ?? Number.POSITIVE_INFINITY;
+  if (limit <= 0) {
+    return;
+  }
+  let added = 0;
   const directCallEdges = dedupeDirectCallEdges(
     [...input.edges.values()].filter((edge) =>
       edge.kind === "CALLS" &&
@@ -414,6 +421,9 @@ function applyTransitiveCallRelationshipEdges(input: ApplyRelationshipGraphFacts
       continue;
     }
     for (const secondHop of outgoingCalls.get(firstHop.toId) ?? []) {
+      if (added >= limit) {
+        return;
+      }
       const target = input.nodes.get(secondHop.toId);
       if (
         !isCallableSource(target) ||
@@ -424,8 +434,34 @@ function applyTransitiveCallRelationshipEdges(input: ApplyRelationshipGraphFacts
         continue;
       }
       input.addEdge("CALLS", source.id, target.id, input.workspaceName, input.repo.name, transitiveCallMetadata(firstHop, secondHop));
+      added += 1;
     }
   }
+}
+
+export function summarizeRelationshipFanOut(edges: Iterable<CodeEdge>): {
+  logicalEdges: number;
+  byKind: Record<string, number>;
+  byOrigin: Record<string, number>;
+  byConfidence: Record<string, number>;
+} {
+  const summary = {
+    logicalEdges: 0,
+    byKind: {} as Record<string, number>,
+    byOrigin: {} as Record<string, number>,
+    byConfidence: {} as Record<string, number>,
+  };
+  for (const edge of edges) {
+    summary.logicalEdges += 1;
+    increment(summary.byKind, edge.kind);
+    increment(summary.byOrigin, stringFromMetadata(edge.metadata, "origin") ?? "unknown");
+    increment(summary.byConfidence, stringFromMetadata(edge.metadata, "confidence") ?? "unknown");
+  }
+  return summary;
+}
+
+function increment(record: Record<string, number>, key: string): void {
+  record[key] = (record[key] ?? 0) + 1;
 }
 
 function applyEnvironmentConfigRelationships(input: ApplyRelationshipGraphFactsInput): void {
